@@ -1,8 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import path from 'node:path';
+import { stat } from 'node:fs/promises';
 import { BookError, readBook } from './book.ts';
 import { StateStore } from './state.ts';
-import { clampOffset, type Encoding, type OpenResult } from '../shared/types.ts';
+import { clampOffset, type Encoding, type OpenResult, type Theme } from '../shared/types.ts';
 
 const baseDir = __dirname;
 let window: BrowserWindow | null = null;
@@ -19,12 +20,16 @@ async function openFile(filePath: string, requestedEncoding?: Encoding): Promise
   const encoding = requestedEncoding ?? previous?.encoding ?? 'utf8';
   try {
     const content = await readBook(filePath, encoding);
+    const modifiedAt = (await stat(filePath)).mtimeMs;
     const offset = clampOffset(previous?.offset ?? 0, content.length);
     let warning: string | undefined;
-    try { await store.updateFile(filePath, { encoding, offset }); }
+    try { await store.updateFile(filePath, { encoding, offset, length: content.length, modifiedAt }); }
     catch { warning = '阅读状态保存失败；本次阅读仍可继续。'; }
     currentPath = filePath;
-    return { ok: true, book: { path: filePath, name: path.basename(filePath), content, encoding, offset, fontSize: store.snapshot().fontSize, warning } };
+    const state = store.snapshot();
+    return { ok: true, book: { path: filePath, name: path.basename(filePath), content, encoding, offset,
+      fontSize: state.fontSize, theme: state.theme, bookmarks: store.record(filePath)?.bookmarks ?? [],
+      changed: Boolean(previous?.length && (previous.length !== content.length || (previous.modifiedAt && previous.modifiedAt !== modifiedAt))), warning } };
   } catch (error) {
     return { ok: false, message: error instanceof BookError ? error.message : '打开文件时发生错误，请重试。' };
   }
@@ -63,7 +68,7 @@ function createWindow(): void {
       if (event.sender !== activeWindow.webContents) return;
       clearTimeout(timeout);
       ipcMain.off('reader:close-progress', onCloseProgress);
-      if (typeof filePath === 'string' && filePath === currentPath && typeof offset === 'number') {
+      if (typeof filePath === 'string' && filePath === currentPath && store.record(filePath) && typeof offset === 'number') {
         try { await store.updateFile(filePath, { offset }); } catch { /* already logged */ }
       }
       finishingClose = true;
@@ -92,14 +97,33 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('reader:choose', chooseFile);
   ipcMain.handle('reader:open', (_event, filePath: string, encoding?: Encoding) => {
-    if (filePath !== currentPath && filePath !== store.snapshot().lastFile) return { ok: false, message: '请先选择文件。' };
+    if (filePath !== currentPath && !store.record(filePath)) return { ok: false, message: '请先选择文件。' };
     return openFile(filePath, encoding);
   });
   ipcMain.handle('reader:progress', (_event, filePath: string, offset: number) => {
-    if (filePath !== currentPath || typeof offset !== 'number') return;
+    if (filePath !== currentPath || !store.record(filePath) || typeof offset !== 'number') return;
     return store.updateFile(filePath, { offset });
   });
   ipcMain.handle('reader:font-size', (_event, size: number) => store.setFontSize(size));
+  ipcMain.handle('reader:appearance', () => {
+    const { fontSize, theme } = store.snapshot();
+    return { fontSize, theme };
+  });
+  ipcMain.handle('reader:theme', (_event, theme: Theme) => store.setTheme(theme));
+  ipcMain.handle('reader:recent', () => store.listRecent());
+  ipcMain.handle('reader:remove-recent', async (_event, filePath: string) => {
+    if (!store.record(filePath)) return;
+    if (currentPath === filePath) currentPath = null;
+    await store.removeFile(filePath);
+  });
+  ipcMain.handle('reader:add-bookmark', (_event, filePath: string, offset: number) => {
+    if (filePath !== currentPath || typeof offset !== 'number') throw new Error('没有正在阅读的文件。');
+    return store.addBookmark(filePath, offset);
+  });
+  ipcMain.handle('reader:remove-bookmark', (_event, filePath: string, id: string) => {
+    if (filePath !== currentPath || typeof id !== 'string') throw new Error('没有正在阅读的文件。');
+    return store.removeBookmark(filePath, id);
+  });
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) { finishingClose = false; createWindow(); } });
 });

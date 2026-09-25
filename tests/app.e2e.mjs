@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -92,6 +92,66 @@ test('a multi-megabyte TXT remains scrollable', async () => {
     assert.ok((await page.locator('#content').textContent()).length > 2_000_000);
     await page.locator('#viewport').evaluate((element) => { element.scrollTop = 100000; });
     await page.waitForFunction(() => Number.parseInt(document.getElementById('progress').textContent) > 0);
+  } finally {
+    if (app) await app.close().catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recent reading, search, bookmarks and theme work in the Electron window', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'reader-features-e2e-'));
+  const userData = path.join(dir, 'profile');
+  await mkdir(userData);
+  const filePath = path.join(dir, 'features.txt');
+  const original = Array.from({ length: 160 }, (_, i) => `第${i}行：中文测试与阅读。`).join('\n');
+  await writeFile(filePath, original);
+  let app;
+  try {
+    app = await launch(userData);
+    let page = await app.firstWindow();
+    await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, filePath);
+    await page.locator('#open').click();
+    await page.locator('#content').waitFor({ state: 'visible' });
+    await page.locator('#search-toggle').click();
+    await page.locator('#search-input').fill('中文测试');
+    await page.waitForFunction(() => document.getElementById('search-count').textContent === '1 / 160');
+    await page.locator('#search-next').click();
+    assert.equal(await page.locator('#search-count').textContent(), '2 / 160');
+    await page.locator('#search-input').fill('不存在的词');
+    await page.waitForFunction(() => document.getElementById('search-count').textContent === '没有结果');
+    await page.locator('#bookmarks-toggle').click();
+    await page.locator('#bookmark-add').click();
+    await page.waitForFunction(() => document.querySelectorAll('#bookmarks-list li').length === 1);
+    await page.locator('#theme').selectOption('dark');
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+    await page.locator('#recent-toggle').click();
+    await page.waitForFunction(() => document.getElementById('recent-list').textContent.includes('features.txt'));
+    await app.close();
+
+    const changed = original.replace('第0行', '第A行');
+    await writeFile(filePath, changed);
+    const later = new Date(Date.now() + 10_000);
+    await utimes(filePath, later, later);
+
+    app = await launch(userData);
+    page = await app.firstWindow();
+    await page.locator('#content').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.getElementById('message').textContent.includes('可能不再精确'));
+    assert.equal(await page.locator('#theme').inputValue(), 'dark');
+    await page.locator('#bookmarks-toggle').click();
+    assert.equal(await page.locator('#bookmarks-list li').count(), 1);
+    await page.locator('#bookmarks-list li button').first().click();
+    await page.locator('#bookmarks-list li button').last().click();
+    await page.waitForFunction(() => document.querySelectorAll('#bookmarks-list li').length === 0);
+    await page.locator('#recent-toggle').click();
+    await page.locator('#recent-list li button').last().click();
+    await page.locator('#empty').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelectorAll('#recent-list li').length === 0);
+    await page.waitForTimeout(500);
+    const state = JSON.parse(await readFile(path.join(userData, 'reader-state', 'state.json'), 'utf8'));
+    assert.deepEqual(state.files, {});
+    assert.equal(state.lastFile, null);
+    assert.equal(await readFile(filePath, 'utf8'), changed);
   } finally {
     if (app) await app.close().catch(() => {});
     await rm(dir, { recursive: true, force: true });
