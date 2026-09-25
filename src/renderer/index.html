@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>TXT 阅读器</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="toolbar">
+        <div class="brand" aria-label="TXT 阅读器">TXT <span>阅读器</span></div>
+        <button id="open" class="primary" type="button">打开 TXT</button>
+        <div class="divider"></div>
+        <label class="encoding-label" for="encoding">编码</label>
+        <select id="encoding" aria-label="文字编码" disabled><option value="utf8">UTF-8</option><option value="gb18030">GB18030</option></select>
+        <div class="spacer"></div>
+        <button id="smaller" class="icon-button" type="button" aria-label="缩小字号" title="缩小字号">A−</button>
+        <span id="font-size" aria-live="polite">18</span>
+        <button id="larger" class="icon-button" type="button" aria-label="放大字号" title="放大字号">A＋</button>
+      </header>
+      <div class="bookbar"><span id="book-title">还没有打开书籍</span><span id="progress"></span></div>
+      <main id="viewport" class="viewport">
+        <section id="empty" class="empty"><div class="empty-mark">文</div><h1>开始阅读</h1><p>打开电脑中的 TXT 文件，随时接着读。</p><button id="empty-open" class="primary large" type="button">选择 TXT 文件</button></section>
+        <article id="content" class="content" aria-label="书籍正文" hidden></article>
+      </main>
+      <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+    </div>
+    <script type="module" src="./index.ts"></script>
+  </body>
+</html>

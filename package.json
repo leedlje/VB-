@@ -1,0 +1,56 @@
+{
+  "name": "local-txt-reader",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "dev": "node scripts/build.mjs --watch",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts && python -m unittest discover -s tests -p test_documentation.py",
+    "test:e2e": "node --test tests/app.e2e.mjs",
+    "verify": "npm run typecheck && npm test && npm run build && npm run test:e2e",
+    "dist:win": "npm run verify && electron-builder --win nsis --x64"
+  },
+  "dependencies": {
+    "iconv-lite": "0.7.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^44.4.5",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "playwright-core": "^1.63.0",
+    "typescript": "^6.0.0",
+    "vite": "8.3.1"
+  },
+  "build": {
+    "appId": "com.localtxtreader.app",
+    "productName": "TXT 阅读器",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
