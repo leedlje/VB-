@@ -7,14 +7,14 @@ from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = ROOT / "docs"
+DOCUMENTS = [ROOT / "PRODUCT_DESIGN.md", ROOT / "README.md", *(ROOT / "docs").rglob("*.md")]
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
 
 
 class DocumentationTests(unittest.TestCase):
-    def test_local_links_in_docs_resolve(self):
-        documents = sorted(DOCS.rglob("*.md"))
-        self.assertTrue(documents, "docs should contain at least one Markdown file")
+    def test_local_links_in_project_documents_resolve(self):
+        documents = sorted(DOCUMENTS)
+        self.assertTrue(documents, "repository should contain Markdown files")
 
         for document in documents:
             content = document.read_text(encoding="utf-8")
