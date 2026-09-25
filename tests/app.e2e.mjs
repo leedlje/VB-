@@ -13,6 +13,16 @@ async function launch(userData) {
   return electron.launch({ executablePath, args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, READER_TEST_USER_DATA: userData } });
 }
 
+async function waitForSavedOffset(statePath) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    if (Object.values(state.files).some((record) => record.offset > 0)) return state;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return JSON.parse(await readFile(statePath, 'utf8'));
+}
+
 test('real Electron window opens TXT, switches encoding, saves progress and restores on restart', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'reader-e2e-'));
   const userData = path.join(dir, 'profile');
@@ -32,8 +42,7 @@ test('real Electron window opens TXT, switches encoding, saves progress and rest
     assert.equal(await page.locator('#book-title').textContent(), 'book.txt');
     assert.match(await page.locator('#content').textContent(), /第 1 行：中文阅读测试/);
     await page.locator('#viewport').evaluate((element) => { element.scrollTop = 1800; });
-    await page.waitForTimeout(500);
-    const before = JSON.parse(await readFile(path.join(userData, 'reader-state', 'state.json'), 'utf8'));
+    const before = await waitForSavedOffset(path.join(userData, 'reader-state', 'state.json'));
     assert.ok(Object.values(before.files)[0].offset > 0, 'scroll must save a character offset');
     await page.locator('#larger').click();
     await page.waitForFunction(() => document.getElementById('font-size').textContent === '20');
