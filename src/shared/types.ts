@@ -14,10 +14,12 @@ export interface FileRecord {
 }
 
 export interface ReaderState {
-  version: 2;
+  version: 3;
   lastFile: string | null;
   fontSize: number;
   theme: Theme;
+  lineHeight: number;
+  contentWidth: number;
   files: Record<string, FileRecord>;
 }
 
@@ -29,6 +31,8 @@ export interface OpenedBook {
   offset: number;
   fontSize: number;
   theme: Theme;
+  lineHeight: number;
+  contentWidth: number;
   bookmarks: Bookmark[];
   changed: boolean;
   warning?: string;
@@ -42,9 +46,11 @@ export interface ReaderApi {
   openFile(path: string, encoding?: Encoding): Promise<OpenResult>;
   saveProgress(path: string, offset: number): Promise<void>;
   setFontSize(size: number): Promise<number>;
-  getAppearance(): Promise<{ fontSize: number; theme: Theme }>;
+  getAppearance(): Promise<{ fontSize: number; theme: Theme; lineHeight: number; contentWidth: number }>;
   setTheme(theme: Theme): Promise<Theme>;
+  setLayout(lineHeight: number, contentWidth: number): Promise<{ lineHeight: number; contentWidth: number }>;
   listRecent(): Promise<FileRecord[]>;
+  relocateFile(path: string): Promise<OpenResult | null>;
   removeRecent(path: string): Promise<void>;
   addBookmark(path: string, offset: number): Promise<Bookmark[]>;
   removeBookmark(path: string, id: string): Promise<Bookmark[]>;

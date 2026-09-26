@@ -19,6 +19,12 @@ const searchPrev = byId<HTMLButtonElement>('search-prev');
 const searchNext = byId<HTMLButtonElement>('search-next');
 let currentBook: OpenedBook | null = null;
 let fontSize = 18;
+let lineHeight = 1.9;
+let contentWidth = 820;
+let lastKnownOffset = 0;
+let resizeAnchor: number | null = null;
+let resizeTimer: number | undefined;
+let lastPanel = '';
 let pendingAnchor: number | null = null;
 let saveTimer: number | undefined;
 let messageTimer: number | undefined;
@@ -34,6 +40,12 @@ function notify(text: string): void {
 }
 
 function applyTheme(value: Theme): void { document.documentElement.dataset.theme = value; theme.value = value; }
+function applyLayout(): void {
+  content.style.setProperty('--reader-line-height', String(lineHeight));
+  content.style.setProperty('--reader-width', `${contentWidth}px`);
+  byId<HTMLOutputElement>('line-height').textContent = lineHeight.toFixed(1);
+  byId<HTMLOutputElement>('content-width').textContent = `${contentWidth} px`;
+}
 
 function currentOffset(): number {
   if (!currentBook) return 0;
@@ -68,6 +80,7 @@ function jumpTo(offset: number): void {
 }
 
 function updateProgress(): void {
+  if (currentBook) lastKnownOffset = currentOffset();
   progress.textContent = currentBook ? `${Math.round(currentOffset() / Math.max(1, currentBook.content.length) * 100)}%` : '';
 }
 
@@ -200,6 +213,16 @@ async function renderRecent(): Promise<void> {
     });
     const details = document.createElement('small');
     details.textContent = record.recentAt ? new Date(record.recentAt).toLocaleString() : '旧版阅读记录';
+    const relocate = document.createElement('button');
+    relocate.type = 'button';
+    relocate.textContent = '重新定位';
+    relocate.setAttribute('aria-label', `重新定位 ${record.path.split(/[\\/]/).pop()}`);
+    relocate.addEventListener('click', async () => {
+      window.clearTimeout(saveTimer);
+      await saveProgress();
+      try { handleResult(await window.reader.relocateFile(record.path)); }
+      catch { notify('重新定位失败，原阅读记录已保留。'); }
+    });
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.textContent = '移除';
@@ -213,7 +236,7 @@ async function renderRecent(): Promise<void> {
         await renderRecent();
       } catch { notify('移除阅读记录失败，请重试。'); }
     });
-    item.append(open, details, remove);
+    item.append(open, details, relocate, remove);
     list.append(item);
   }
 }
@@ -223,7 +246,10 @@ function showBook(book: OpenedBook): void {
   pendingAnchor = null;
   currentBook = book;
   fontSize = book.fontSize;
+  lineHeight = book.lineHeight;
+  contentWidth = book.contentWidth;
   content.style.setProperty('--reader-font-size', `${fontSize}px`);
+  applyLayout();
   fontSizeLabel.textContent = String(fontSize);
   applyTheme(book.theme);
   content.textContent = book.content;
@@ -293,12 +319,67 @@ async function changeTheme(next: Theme): Promise<void> {
   } catch { pendingAnchor = null; applyTheme(previous); notify('主题设置保存失败，请重试。'); }
 }
 
+async function changeLayout(lineDelta: number, widthDelta: number): Promise<void> {
+  const offset = currentOffset();
+  pendingAnchor = offset;
+  try {
+    await saveProgress();
+    const next = await window.reader.setLayout(lineHeight + lineDelta, contentWidth + widthDelta);
+    lineHeight = next.lineHeight;
+    contentWidth = next.contentWidth;
+    if (currentBook) { currentBook.lineHeight = lineHeight; currentBook.contentWidth = contentWidth; }
+    applyLayout();
+    requestAnimationFrame(() => { restoreOffset(offset); pendingAnchor = null; queueProgress(); });
+  } catch { pendingAnchor = null; notify('排版设置保存失败，请重试。'); }
+}
+
+const panels: Record<string, string> = {
+  'recent-panel': 'recent-toggle', 'bookmarks-panel': 'bookmarks-toggle',
+  searchbar: 'search-toggle', layoutbar: 'layout-toggle',
+};
+
+function closePanel(panelId: string, restoreFocus = false): void {
+  const panel = byId<HTMLElement>(panelId);
+  if (panel.hidden) return;
+  panel.hidden = true;
+  byId<HTMLButtonElement>(panels[panelId]).setAttribute('aria-expanded', 'false');
+  if (panelId === 'searchbar') { searchInput.value = ''; void runSearch(); }
+  if (restoreFocus) (currentBook ? viewport : byId<HTMLButtonElement>(panels[panelId])).focus();
+}
+
 function togglePanel(panelId: string, toggleId: string): void {
   const panel = byId<HTMLElement>(panelId);
-  panel.hidden = !panel.hidden;
-  byId<HTMLButtonElement>(toggleId).setAttribute('aria-expanded', String(!panel.hidden));
+  if (!panel.hidden) { closePanel(panelId); return; }
+  if (panelId === 'recent-panel') closePanel('bookmarks-panel');
+  if (panelId === 'bookmarks-panel') closePanel('recent-panel');
+  panel.hidden = false;
+  lastPanel = panelId;
+  byId<HTMLButtonElement>(toggleId).setAttribute('aria-expanded', 'true');
   if (!panel.hidden && panelId === 'recent-panel') void renderRecent();
   if (!panel.hidden && panelId === 'searchbar') searchInput.focus();
+}
+
+function handleShortcut(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229 || event.altKey || event.metaKey) return;
+  const key = event.key.toLowerCase();
+  if (event.ctrlKey && key === 'o') { event.preventDefault(); void chooseFile(); return; }
+  if (event.ctrlKey && key === 'f') {
+    event.preventDefault();
+    if (byId<HTMLElement>('searchbar').hidden) togglePanel('searchbar', 'search-toggle');
+    searchInput.focus();
+    searchInput.select();
+    return;
+  }
+  if (!event.ctrlKey && key === 'f3' && !byId<HTMLElement>('searchbar').hidden) {
+    event.preventDefault();
+    stepMatch(event.shiftKey ? -1 : 1);
+    return;
+  }
+  if (!event.ctrlKey && key === 'escape') {
+    const active = [lastPanel, 'searchbar', 'recent-panel', 'bookmarks-panel', 'layoutbar']
+      .find((id) => id && !byId<HTMLElement>(id).hidden);
+    if (active) { event.preventDefault(); closePanel(active, true); }
+  }
 }
 
 byId<HTMLButtonElement>('open').addEventListener('click', () => { void chooseFile(); });
@@ -306,6 +387,11 @@ byId<HTMLButtonElement>('empty-open').addEventListener('click', () => { void cho
 byId<HTMLButtonElement>('recent-toggle').addEventListener('click', () => togglePanel('recent-panel', 'recent-toggle'));
 byId<HTMLButtonElement>('search-toggle').addEventListener('click', () => togglePanel('searchbar', 'search-toggle'));
 byId<HTMLButtonElement>('bookmarks-toggle').addEventListener('click', () => togglePanel('bookmarks-panel', 'bookmarks-toggle'));
+byId<HTMLButtonElement>('layout-toggle').addEventListener('click', () => togglePanel('layoutbar', 'layout-toggle'));
+byId<HTMLButtonElement>('line-smaller').addEventListener('click', () => { void changeLayout(-0.2, 0); });
+byId<HTMLButtonElement>('line-larger').addEventListener('click', () => { void changeLayout(0.2, 0); });
+byId<HTMLButtonElement>('width-smaller').addEventListener('click', () => { void changeLayout(0, -80); });
+byId<HTMLButtonElement>('width-larger').addEventListener('click', () => { void changeLayout(0, 80); });
 byId<HTMLButtonElement>('smaller').addEventListener('click', () => { void changeFontSize(-2); });
 byId<HTMLButtonElement>('larger').addEventListener('click', () => { void changeFontSize(2); });
 byId<HTMLButtonElement>('bookmark-add').addEventListener('click', async () => {
@@ -319,11 +405,24 @@ searchNext.addEventListener('click', () => stepMatch(1));
 encoding.addEventListener('change', () => { void changeEncoding(encoding.value as Encoding); });
 theme.addEventListener('change', () => { void changeTheme(theme.value as Theme); });
 viewport.addEventListener('scroll', queueProgress, { passive: true });
+window.addEventListener('keydown', handleShortcut);
+window.addEventListener('resize', () => {
+  if (!currentBook) return;
+  if (resizeAnchor === null) resizeAnchor = lastKnownOffset;
+  window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    if (resizeAnchor !== null) jumpTo(resizeAnchor);
+    resizeAnchor = null;
+  }, 120);
+});
 window.reader.onRequestProgress(() => window.reader.submitCloseProgress(currentBook?.path ?? null, currentOffset()));
 
 window.reader.getAppearance().then((appearance) => {
   fontSize = appearance.fontSize;
+  lineHeight = appearance.lineHeight;
+  contentWidth = appearance.contentWidth;
   fontSizeLabel.textContent = String(fontSize);
+  applyLayout();
   applyTheme(appearance.theme);
 }).catch(() => notify('读取阅读设置失败，已使用默认外观。'));
 window.reader.restoreLastFile().then(handleResult).catch(() => notify('恢复上次阅读失败，请重新选择 TXT 文件。'));

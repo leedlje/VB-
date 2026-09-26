@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -40,16 +40,92 @@ test('version 1 state migrates without losing progress and new fields have defau
       files: { [book]: { path: book, encoding: 'gb18030', offset: 72 } } }));
     const store = new StateStore(filePath);
     const state = await store.load();
-    assert.equal(state.version, 2);
+    assert.equal(state.version, 3);
     assert.equal(state.lastFile, book);
     assert.equal(state.fontSize, 24);
     assert.equal(state.theme, 'light');
+    assert.equal(state.lineHeight, 1.9);
+    assert.equal(state.contentWidth, 820);
     assert.equal(store.record(book)?.offset, 72);
     assert.equal(store.record(book)?.modifiedAt, 0);
     assert.deepEqual(store.record(book)?.bookmarks, []);
     await store.updateFile(book, { length: 100 });
     assert.equal(store.record(book)?.offset, 72);
-    assert.equal(JSON.parse(await readFile(filePath, 'utf8')).version, 2);
+    assert.equal(JSON.parse(await readFile(filePath, 'utf8')).version, 3);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('version 2 bookmarks, theme and progress migrate with layout defaults', () => {
+  const book = path.join(os.tmpdir(), 'version-two.txt');
+  const state = parseState({ version: 2, lastFile: book, fontSize: 22, theme: 'sepia', files: {
+    [book]: { path: book, encoding: 'utf8', offset: 45, length: 100, recentAt: 123,
+      modifiedAt: 456, bookmarks: [{ id: 'saved', offset: 40, createdAt: 789 }] },
+  } });
+  assert.equal(state.version, 3);
+  assert.equal(state.lastFile, book);
+  assert.equal(state.fontSize, 22);
+  assert.equal(state.theme, 'sepia');
+  assert.equal(state.lineHeight, 1.9);
+  assert.equal(state.contentWidth, 820);
+  assert.equal(Object.values(state.files)[0].offset, 45);
+  assert.equal(Object.values(state.files)[0].bookmarks[0].id, 'saved');
+});
+
+test('relocation keeps metadata and rolls back on conflict or write failure', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'reader-relocate-'));
+  try {
+    const statePath = path.join(dir, 'state.json');
+    const oldPath = path.join(dir, 'old.txt');
+    const newPath = path.join(dir, 'new.txt');
+    const other = path.join(dir, 'other.txt');
+    const store = new StateStore(statePath);
+    await store.load();
+    await store.updateFile(oldPath, { encoding: 'gb18030', offset: 72, length: 100, modifiedAt: 9 });
+    const [bookmark] = await store.addBookmark(oldPath, 70);
+    const recentAt = store.record(oldPath)?.recentAt;
+    await store.updateFile(other, { length: 5 });
+    await assert.rejects(store.relocateFile(oldPath, other, 100, 10), /已有阅读记录/);
+    assert.equal(store.record(oldPath)?.offset, 72);
+    const [moved] = await Promise.all([
+      store.relocateFile(oldPath, newPath, 80, 10),
+      store.updateFile(newPath, { offset: 74 }),
+      store.setTheme('dark'),
+    ]);
+    assert.equal(moved.path, newPath);
+    assert.equal(moved.encoding, 'gb18030');
+    assert.equal(moved.offset, 72);
+    assert.equal(moved.bookmarks[0].id, bookmark.id);
+    assert.equal(moved.recentAt, recentAt);
+    assert.equal(store.record(oldPath), undefined);
+    const restored = new StateStore(statePath);
+    await restored.load();
+    assert.equal(restored.record(newPath)?.bookmarks[0].offset, 70);
+    assert.equal(restored.record(newPath)?.offset, 74);
+    assert.equal(restored.snapshot().theme, 'dark');
+
+    const blockedPath = path.join(dir, 'blocked-state');
+    await mkdir(blockedPath);
+    const blocked = new StateStore(blockedPath, () => {});
+    await blocked.load();
+    await assert.rejects(blocked.updateFile(oldPath, { length: 100 }));
+    const before = blocked.snapshot();
+    await assert.rejects(blocked.relocateFile(oldPath, newPath, 80, 10));
+    assert.deepEqual(blocked.snapshot(), before);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('layout settings are clamped and persist', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'reader-layout-'));
+  try {
+    const filePath = path.join(dir, 'state.json');
+    const store = new StateStore(filePath);
+    await store.load();
+    assert.deepEqual(await store.setLayout(3, 200), { lineHeight: 2.4, contentWidth: 560 });
+    const restored = new StateStore(filePath);
+    const state = await restored.load();
+    assert.equal(state.lineHeight, 2.4);
+    assert.equal(state.contentWidth, 560);
+    assert.equal(parseState({ version: 3, lineHeight: -1, contentWidth: 5000 }).lineHeight, 1.4);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

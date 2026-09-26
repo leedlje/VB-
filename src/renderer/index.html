@@ -10,10 +10,11 @@
     <div id="app">
       <header class="toolbar">
         <div class="brand" aria-label="TXT 阅读器">TXT <span>阅读器</span></div>
-        <button id="open" class="primary" type="button">打开 TXT</button>
+        <button id="open" class="primary" type="button" title="Ctrl+O">打开 TXT</button>
         <button id="recent-toggle" class="icon-button text-button" type="button" aria-controls="recent-panel" aria-expanded="false">最近阅读</button>
-        <button id="search-toggle" class="icon-button text-button" type="button" aria-controls="searchbar" aria-expanded="false">搜索</button>
+        <button id="search-toggle" class="icon-button text-button" type="button" aria-controls="searchbar" aria-expanded="false" title="Ctrl+F">搜索</button>
         <button id="bookmarks-toggle" class="icon-button text-button" type="button" aria-controls="bookmarks-panel" aria-expanded="false">书签</button>
+        <button id="layout-toggle" class="icon-button text-button" type="button" aria-controls="layoutbar" aria-expanded="false">排版</button>
         <div class="divider"></div>
         <label class="encoding-label" for="encoding">编码</label>
         <select id="encoding" aria-label="文字编码" disabled><option value="utf8">UTF-8</option><option value="gb18030">GB18030</option></select>
@@ -24,6 +25,10 @@
         <span id="font-size" aria-live="polite">18</span>
         <button id="larger" class="icon-button" type="button" aria-label="放大字号" title="放大字号">A＋</button>
       </header>
+      <div id="layoutbar" class="settingsbar" hidden>
+        <span>行距</span><button id="line-smaller" type="button" aria-label="缩小行距">−</button><output id="line-height">1.9</output><button id="line-larger" type="button" aria-label="增大行距">＋</button>
+        <span>正文宽度</span><button id="width-smaller" type="button" aria-label="缩小正文宽度">−</button><output id="content-width">820 px</output><button id="width-larger" type="button" aria-label="增大正文宽度">＋</button>
+      </div>
       <div id="searchbar" class="searchbar" hidden>
         <label for="search-input">文内搜索</label><input id="search-input" type="search" placeholder="输入要查找的文字" autocomplete="off" />
         <span id="search-count" role="status" aria-live="polite">输入文字开始搜索</span>
@@ -33,7 +38,7 @@
       <div class="reader-layout">
       <aside id="recent-panel" class="side-panel" hidden><h2>最近阅读</h2><p id="recent-empty">还没有阅读记录。</p><ul id="recent-list"></ul></aside>
       <aside id="bookmarks-panel" class="side-panel" hidden><h2>书签</h2><button id="bookmark-add" type="button" disabled>添加当前位置</button><p id="bookmarks-empty">当前文件还没有书签。</p><ul id="bookmarks-list"></ul></aside>
-      <main id="viewport" class="viewport">
+      <main id="viewport" class="viewport" tabindex="-1">
         <section id="empty" class="empty"><div class="empty-mark">文</div><h1>开始阅读</h1><p>打开电脑中的 TXT 文件，随时接着读。</p><button id="empty-open" class="primary large" type="button">选择 TXT 文件</button></section>
         <article id="content" class="content" aria-label="书籍正文" hidden></article>
       </main>
