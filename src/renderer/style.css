@@ -9,6 +9,7 @@ button, select, input { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .5; }
 .toolbar { min-height: 64px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 24px; background: var(--panel); border-bottom: 1px solid var(--border); flex: none; }
+.appearance-group { display: flex; align-items: center; gap: 8px; white-space: nowrap; margin-left: auto; }
 .brand { font-size: 19px; letter-spacing: .02em; font-weight: 750; color: var(--accent); white-space: nowrap; margin-right: 10px; }
 .brand span { font-size: 16px; font-weight: 550; }
 .primary { border: 0; border-radius: 8px; background: var(--accent); color: #fff; padding: 10px 16px; font-weight: 600; }
@@ -52,6 +53,30 @@ select:disabled { opacity: .5; }
 .empty p { margin: 0 0 26px; line-height: 1.6; }
 .large { padding: 12px 22px; }
 .message { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); width: min(550px, calc(100vw - 30px)); border-radius: 8px; padding: 12px 18px; background: var(--notice); border: 1px solid var(--notice-border); box-shadow: 0 8px 28px #3b342224; color: var(--notice-text); text-align: center; }
+.shelf { padding: 28px clamp(20px, 5vw, 64px) 60px; }
+.shelf-heading { display: flex; align-items: end; justify-content: space-between; }
+.shelf h1 { margin: 0; font-size: 28px; letter-spacing: -.03em; }
+.shelf-heading p, #shelf-empty { color: var(--muted); }
+.shelf-tools { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0; }
+.shelf-tools input { flex: 1; min-width: 180px; }
+.shelf-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; }
+.shelf-card { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; }
+.shelf-card:hover { border-color: var(--accent); }
+.shelf-cover { aspect-ratio: 4 / 5; width: 100%; object-fit: cover; border-radius: 6px; display: grid; place-items: center; background: var(--soft); color: var(--accent); font-family: Georgia, serif; font-size: 32px; }
+.shelf-title { font-weight: 700; text-align: left; border: 0; background: none; color: var(--text); padding: 0; overflow-wrap: anywhere; }
+.shelf-card small { color: var(--muted); overflow-wrap: anywhere; }
+.shelf-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.shelf-actions button { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px; padding: 5px 7px; font-size: 12px; }
+.shelf-actions button:hover { background: var(--hover); }
+.publication-view { width: 100%; height: 100%; min-height: 0; }
+.publication-view iframe { border: none; }
+#pdf-controls { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#pdf-page { width: 66px; }
+.pdf-scroll { width: 100%; height: 100%; overflow: auto; padding: 18px; }
+.pdf-page { margin: 0 auto; position: relative; background: white; box-shadow: 0 4px 24px #0003; }
+.pdf-canvas { display: block; }
+.pdf-page .textLayer { inset: 0; }
+#chapters-panel li button { width: 100%; text-align: left; overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
 @media (max-width: 800px) { .toolbar { padding: 10px 12px; gap: 7px; } .brand span, .divider, .encoding-label { display: none; } .primary { padding: 9px 10px; } .content { padding: 24px 20px 100px; } .bookbar { padding: 12px 20px; } .side-panel { flex-basis: 220px; } }
 @media (max-width: 700px) { .reader-layout { position: relative; } .side-panel { position: absolute; z-index: 2; inset: 0 auto 0 0; width: min(280px, 82vw); box-shadow: 8px 0 20px #0002; } .viewport { width: 100%; } .settingsbar { padding: 8px 12px; } }

@@ -20,7 +20,7 @@ test('each file has independent encoding and character offset across launches', 
     await first.setFontSize(24);
     const second = new StateStore(filePath);
     const state = await second.load();
-    assert.equal(state.lastFile, b);
+    assert.equal(state.books[state.lastBookId!].path, b);
     assert.equal(second.record(a)?.encoding, 'gb18030');
     assert.equal(second.record(a)?.offset, 145);
     assert.equal(second.record(a)?.length, 200);
@@ -40,8 +40,8 @@ test('version 1 state migrates without losing progress and new fields have defau
       files: { [book]: { path: book, encoding: 'gb18030', offset: 72 } } }));
     const store = new StateStore(filePath);
     const state = await store.load();
-    assert.equal(state.version, 3);
-    assert.equal(state.lastFile, book);
+    assert.equal(state.version, 4);
+    assert.equal(state.books[state.lastBookId!].path, book);
     assert.equal(state.fontSize, 24);
     assert.equal(state.theme, 'light');
     assert.equal(state.lineHeight, 1.9);
@@ -49,9 +49,10 @@ test('version 1 state migrates without losing progress and new fields have defau
     assert.equal(store.record(book)?.offset, 72);
     assert.equal(store.record(book)?.modifiedAt, 0);
     assert.deepEqual(store.record(book)?.bookmarks, []);
+    assert.equal(JSON.parse(await readFile(`${filePath}.v1.bak`, 'utf8')).version, 1);
     await store.updateFile(book, { length: 100 });
     assert.equal(store.record(book)?.offset, 72);
-    assert.equal(JSON.parse(await readFile(filePath, 'utf8')).version, 3);
+    assert.equal(JSON.parse(await readFile(filePath, 'utf8')).version, 4);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -61,14 +62,14 @@ test('version 2 bookmarks, theme and progress migrate with layout defaults', () 
     [book]: { path: book, encoding: 'utf8', offset: 45, length: 100, recentAt: 123,
       modifiedAt: 456, bookmarks: [{ id: 'saved', offset: 40, createdAt: 789 }] },
   } });
-  assert.equal(state.version, 3);
-  assert.equal(state.lastFile, book);
+  assert.equal(state.version, 4);
+  assert.equal(state.books[state.lastBookId!].path, book);
   assert.equal(state.fontSize, 22);
   assert.equal(state.theme, 'sepia');
   assert.equal(state.lineHeight, 1.9);
   assert.equal(state.contentWidth, 820);
-  assert.equal(Object.values(state.files)[0].offset, 45);
-  assert.equal(Object.values(state.files)[0].bookmarks[0].id, 'saved');
+  assert.deepEqual(Object.values(state.books)[0].position, { format: 'txt', offset: 45, length: 100, encoding: 'utf8' });
+  assert.equal(Object.values(state.books)[0].bookmarks[0].id, 'saved');
 });
 
 test('relocation keeps metadata and rolls back on conflict or write failure', async () => {
@@ -153,7 +154,7 @@ test('recent list, bookmarks, themes and removal persist without altering source
     await restored.removeBookmark(a, marks[0].id);
     assert.deepEqual(restored.record(a)?.bookmarks, []);
     await restored.removeFile(a);
-    assert.equal(restored.snapshot().lastFile, b);
+    assert.equal(restored.snapshot().books[restored.snapshot().lastBookId!].path, b);
     assert.equal(restored.record(a), undefined);
     assert.equal(await readFile(a, 'utf8'), '原文内容');
     await assert.rejects(store.setTheme('invalid' as 'light'));
@@ -169,6 +170,7 @@ test('corrupt or malformed state falls back to safe defaults', async () => {
     const store = new StateStore(filePath, (error) => errors.push(error));
     assert.equal((await store.load()).fontSize, DEFAULT_FONT_SIZE);
     assert.equal(errors.length, 1);
+    assert.equal(await readFile(`${filePath}.vinvalid.bak`, 'utf8'), '{broken');
     assert.deepEqual(parseState({ version: 99, files: {} }), parseState(null));
     assert.equal(parseState({ version: 1, fontSize: 100, files: {} }).fontSize, 32);
   } finally { await rm(dir, { recursive: true, force: true }); }

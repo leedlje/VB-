@@ -17,5 +17,17 @@ const api: ReaderApi = {
   removeBookmark: (filePath, id) => ipcRenderer.invoke('reader:remove-bookmark', filePath, id),
   onRequestProgress: (callback) => { ipcRenderer.on('reader:request-progress', callback); },
   submitCloseProgress: (filePath, offset) => ipcRenderer.send('reader:close-progress', filePath, offset),
+  chooseBooks: () => ipcRenderer.invoke('reader:choose-books'),
+  listBooks: () => ipcRenderer.invoke('reader:list-books'),
+  getLastBookId: () => ipcRenderer.invoke('reader:last-book-id'),
+  getStartupWarning: () => ipcRenderer.invoke('reader:startup-warning'),
+  openPublication: (id) => ipcRenderer.invoke('reader:open-publication', id),
+  readPublication: (id) => ipcRenderer.invoke('reader:read-publication', id),
+  saveBookPosition: (id, position) => ipcRenderer.invoke('reader:book-position', id, position),
+  addBookBookmark: (id, position) => ipcRenderer.invoke('reader:add-book-mark', id, position),
+  removeBookBookmark: (id, markId) => ipcRenderer.invoke('reader:remove-book-mark', id, markId),
+  removeBook: (id) => ipcRenderer.invoke('reader:remove-book', id),
+  relocateBook: (id) => ipcRenderer.invoke('reader:relocate-book', id),
+  coverData: (id) => ipcRenderer.invoke('reader:cover-data', id),
 };
 contextBridge.exposeInMainWorld('reader', api);

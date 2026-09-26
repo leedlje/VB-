@@ -17,7 +17,7 @@ async function waitForSavedOffset(statePath) {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const state = JSON.parse(await readFile(statePath, 'utf8'));
-    if (Object.values(state.files).some((record) => record.offset > 0)) return state;
+    if (Object.values(state.books).some((record) => record.position.offset > 0)) return state;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return JSON.parse(await readFile(statePath, 'utf8'));
@@ -41,9 +41,10 @@ test('real Electron window opens TXT, switches encoding, saves progress and rest
     await page.locator('#content').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#book-title').textContent(), 'book.txt');
     assert.match(await page.locator('#content').textContent(), /第 1 行：中文阅读测试/);
+    await page.waitForFunction(() => document.getElementById('progress').textContent !== '');
     await page.locator('#viewport').evaluate((element) => { element.scrollTop = 1800; });
     const before = await waitForSavedOffset(path.join(userData, 'reader-state', 'state.json'));
-    assert.ok(Object.values(before.files)[0].offset > 0, 'scroll must save a character offset');
+    assert.ok(Object.values(before.books)[0].position.offset > 0, 'scroll must save a character offset');
     await page.locator('#larger').click();
     await page.waitForFunction(() => document.getElementById('font-size').textContent === '20');
     assert.equal(await page.locator('#font-size').textContent(), '20');
@@ -68,7 +69,7 @@ test('real Electron window opens TXT, switches encoding, saves progress and rest
     page = await app.firstWindow();
     await page.locator('#message').waitFor({ state: 'visible' });
     assert.match(await page.locator('#message').textContent(), /文件已不存在/);
-    assert.equal(await page.locator('#empty').isVisible(), true);
+    assert.equal(await page.locator('#shelf').isVisible(), true);
     await app.close();
   } finally {
     if (app) await app.close().catch(() => {});
@@ -149,8 +150,8 @@ test('recent reading, search, bookmarks and theme work in the Electron window', 
     await page.waitForFunction(() => document.querySelectorAll('#recent-list li').length === 0);
     await page.waitForTimeout(500);
     const state = JSON.parse(await readFile(path.join(userData, 'reader-state', 'state.json'), 'utf8'));
-    assert.deepEqual(state.files, {});
-    assert.equal(state.lastFile, null);
+    assert.deepEqual(state.books, {});
+    assert.equal(state.lastBookId, null);
     assert.equal(await readFile(filePath, 'utf8'), changed);
   } finally {
     if (app) await app.close().catch(() => {});
@@ -216,11 +217,11 @@ test('moved TXT can be relinked without losing its old record on canceled or inv
     await page.waitForFunction(() => document.getElementById('book-title').textContent === 'moved.txt');
     await page.waitForFunction(() => document.getElementById('message').textContent.includes('可能不再精确'));
     const migrated = JSON.parse(await readFile(statePath, 'utf8'));
-    assert.equal(Object.values(migrated.files).some((record) => record.path === oldPath), false);
-    const movedRecord = Object.values(migrated.files).find((record) => record.path === movedPath);
+    assert.equal(Object.values(migrated.books).some((record) => record.path === oldPath), false);
+    const movedRecord = Object.values(migrated.books).find((record) => record.path === movedPath);
     assert.equal(movedRecord.bookmarks.length, 1);
-    assert.equal(migrated.lastFile, movedPath);
-    assert.ok(movedRecord.offset > 0);
+    assert.equal(migrated.books[migrated.lastBookId].path, movedPath);
+    assert.ok(movedRecord.position.offset > 0);
     assert.equal(await readFile(movedPath, 'utf8'), `${text}追加内容`);
     await app.close();
 
@@ -254,7 +255,7 @@ test('keyboard shortcuts and layout settings survive restart and narrow windows'
     await page.locator('#viewport').evaluate((element) => { element.scrollTop = 1500; });
     await page.waitForFunction(() => document.getElementById('viewport').scrollTop > 1000);
     const statePath = path.join(userData, 'reader-state', 'state.json');
-    const before = Object.values((await waitForSavedOffset(statePath)).files)[0].offset;
+    const before = Object.values((await waitForSavedOffset(statePath)).books)[0].position.offset;
     await page.keyboard.press('Control+f');
     assert.equal(await page.locator('#search-input').evaluate((element) => element === document.activeElement), true);
     await page.locator('#search-input').fill('目标');
@@ -282,7 +283,7 @@ test('keyboard shortcuts and layout settings survive restart and narrow windows'
     await page.locator('#viewport').evaluate((element) => { element.scrollTop = 1800; });
     await page.waitForFunction(() => Number.parseInt(document.getElementById('progress').textContent) > 0);
     await page.waitForTimeout(450);
-    const anchorBefore = Object.values(JSON.parse(await readFile(statePath, 'utf8')).files)[0].offset;
+    const anchorBefore = Object.values(JSON.parse(await readFile(statePath, 'utf8')).books)[0].position.offset;
 
     await page.locator('#layout-toggle').click();
     await page.locator('#line-larger').click();
@@ -294,12 +295,12 @@ test('keyboard shortcuts and layout settings survive restart and narrow windows'
     assert.equal(after.contentWidth, 740);
     assert.ok(before > 0, `scroll progress offset=${before}`);
     await page.waitForTimeout(450);
-    const anchorAfter = Object.values(JSON.parse(await readFile(statePath, 'utf8')).files)[0].offset;
+    const anchorAfter = Object.values(JSON.parse(await readFile(statePath, 'utf8')).books)[0].position.offset;
     assert.ok(Math.abs(anchorAfter - anchorBefore) < 200, `layout moved reading anchor from ${anchorBefore} to ${anchorAfter}`);
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(620, 700); });
     await page.waitForFunction(() => window.innerWidth < 700);
     await page.waitForTimeout(550);
-    const afterResize = Object.values(JSON.parse(await readFile(statePath, 'utf8')).files)[0].offset;
+    const afterResize = Object.values(JSON.parse(await readFile(statePath, 'utf8')).books)[0].position.offset;
     assert.ok(Math.abs(afterResize - anchorAfter) < 200, `resize moved reading anchor from ${anchorAfter} to ${afterResize}`);
     const bounds = await page.locator('#content').evaluate((element) => {
       const content = element.getBoundingClientRect();
@@ -351,13 +352,13 @@ test('relinking the active GB18030 book switches later progress writes to the ne
     await page.locator('#viewport').evaluate((element) => { element.scrollTop = 1200; });
     const statePath = path.join(userData, 'reader-state', 'state.json');
     const state = await waitForSavedOffset(statePath);
-    assert.equal(Object.values(state.files).length, 1);
-    assert.equal(Object.values(state.files)[0].path, newPath);
-    assert.ok(Object.values(state.files)[0].offset > 0);
+    assert.equal(Object.values(state.books).length, 1);
+    assert.equal(Object.values(state.books)[0].path, newPath);
+    assert.ok(Object.values(state.books)[0].position.offset > 0);
     await app.close();
     const closed = JSON.parse(await readFile(statePath, 'utf8'));
-    assert.equal(Object.values(closed.files).length, 1);
-    assert.equal(Object.values(closed.files)[0].path, newPath);
+    assert.equal(Object.values(closed.books).length, 1);
+    assert.equal(Object.values(closed.books)[0].path, newPath);
     assert.deepEqual(await readFile(oldPath), bytes);
     assert.deepEqual(await readFile(newPath), bytes);
   } finally {

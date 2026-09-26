@@ -1,6 +1,6 @@
 {
-  "name": "local-txt-reader",
-  "version": "1.2.0",
+  "name": "vb-reader",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "main": "dist/main.cjs",
@@ -9,25 +9,33 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts && python -m unittest discover -s tests -p test_documentation.py",
-    "test:e2e": "node --test tests/app.e2e.mjs",
+    "test:e2e": "node --test --test-concurrency=1 tests/*.e2e.mjs",
     "verify": "npm run typecheck && npm test && npm run build && npm run test:e2e",
     "dist:win": "npm run verify && electron-builder --win nsis --x64"
   },
   "dependencies": {
-    "iconv-lite": "0.7.3"
+    "epubjs": "^0.3.93",
+    "fast-xml-parser": "^5.11.1",
+    "iconv-lite": "0.7.3",
+    "jszip": "^3.10.2",
+    "pdfjs-dist": "^6.3.289"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "electron": "^44.4.5",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
+    "pdf-lib": "^1.17.1",
     "playwright-core": "^1.63.0",
     "typescript": "^6.0.0",
     "vite": "8.3.1"
   },
+  "overrides": {
+    "@xmldom/xmldom": "0.8.15"
+  },
   "build": {
     "appId": "com.localtxtreader.app",
-    "productName": "TXT 阅读器",
+    "productName": "VB阅读器",
     "directories": {
       "output": "release"
     },
@@ -51,7 +59,9 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "VB阅读器",
+      "uninstallDisplayName": "VB阅读器"
     }
   }
 }

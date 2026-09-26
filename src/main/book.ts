@@ -5,7 +5,7 @@ import type { Encoding } from '../shared/types.ts';
 
 export class BookError extends Error {
   readonly kind: 'invalid' | 'missing' | 'unreadable' | 'empty';
-  constructor(message: string, kind: 'invalid' | 'missing' | 'unreadable' | 'empty') { super(message); this.kind = kind; }
+  constructor(message: string, kind: 'invalid' | 'missing' | 'unreadable' | 'empty' = 'invalid') { super(message); this.kind = kind; }
 }
 
 export function normalizedKey(filePath: string): string {

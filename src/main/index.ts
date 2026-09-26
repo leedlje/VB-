@@ -1,17 +1,115 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol, session } from 'electron';
 import path from 'node:path';
-import { stat } from 'node:fs/promises';
+import { mkdir, open, readFile, stat, writeFile, rm } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import { BookError, normalizedKey, readBook } from './book.ts';
+import { inspectBook, formatForPath } from './inspect.ts';
 import { StateStore } from './state.ts';
-import { clampOffset, type Encoding, type OpenResult, type Theme } from '../shared/types.ts';
+import { clampOffset, type BookPosition, type Encoding, type ImportResult, type OpenResult, type PublicationResult, type Theme } from '../shared/types.ts';
 
 const baseDir = __dirname;
 let window: BrowserWindow | null = null;
 let store: StateStore;
 let currentPath: string | null = null;
+let currentBookId: string | null = null;
 let finishingClose = false;
 
-if (process.env.READER_TEST_USER_DATA) app.setPath('userData', process.env.READER_TEST_USER_DATA);
+protocol.registerSchemesAsPrivileged([{ scheme: 'vbbook', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }]);
+app.setPath('userData', process.env.READER_TEST_USER_DATA || path.join(app.getPath('appData'), 'local-txt-reader'));
+const coverDir = () => path.join(app.getPath('userData'), 'reader-state', 'covers');
+
+async function importPaths(paths: string[]): Promise<ImportResult> {
+  const result: ImportResult = { added: [], errors: [] };
+  for (const filePath of paths) {
+    try {
+      const existing = store.byPath(filePath);
+      if (existing) { result.added.push(existing); continue; }
+      const inspected = await inspectBook(filePath);
+      let book = await store.importBook(inspected.record);
+      if (inspected.cover) {
+        try {
+          await mkdir(coverDir(), { recursive: true });
+          await writeFile(path.join(coverDir(), book.id), inspected.cover.bytes);
+          const mimePath = path.join(coverDir(), `${book.id}.mime`);
+          await writeFile(mimePath, inspected.cover.mime, 'utf8');
+          await store.setCoverKey(book.id, book.id);
+          book = store.book(book.id)!;
+        } catch { /* default cover stays usable */ }
+      }
+      result.added.push(book);
+    } catch (error) {
+      result.errors.push({ path: filePath, message: error instanceof BookError ? error.message : '导入失败，请检查文件。' });
+    }
+  }
+  return result;
+}
+async function chooseBooks(): Promise<ImportResult | null> {
+  if (!window) return null;
+  const choice = await dialog.showOpenDialog(window, {
+    title: '导入书籍', properties: ['openFile', 'multiSelections'],
+    filters: [{ name: '电子书', extensions: ['txt', 'epub', 'pdf'] }],
+  });
+  return choice.canceled ? null : importPaths(choice.filePaths);
+}
+async function openPublication(id: string): Promise<PublicationResult> {
+  const book = typeof id === 'string' ? store.book(id) : undefined;
+  if (!book) return { ok: false, message: '书籍记录不存在。' };
+  try {
+    if (formatForPath(book.path) !== book.format) throw new BookError('文件格式与书架记录不一致，请重新定位。');
+    const info = await stat(book.path);
+    if (!info.isFile()) throw new BookError('请选择普通文件。');
+    if (book.format === 'pdf') {
+      const handle = await open(book.path, 'r');
+      try {
+        const signature = Buffer.alloc(5);
+        await handle.read(signature, 0, 5, 0);
+        if (signature.toString() !== '%PDF-') throw new BookError('PDF 文件损坏或格式不正确。');
+      } finally { await handle.close(); }
+    } else {
+      const inspected = await inspectBook(book.path);
+      if (inspected.record.format !== book.format) throw new BookError('文件格式与书架记录不一致，请重新定位。');
+    }
+    currentBookId = id;
+    currentPath = book.format === 'txt' ? book.path : null;
+    const touched = await store.touch(id);
+    return { ok: true, book: touched, url: `vbbook://book/${encodeURIComponent(id)}` };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return { ok: false, message: error instanceof BookError ? error.message :
+      code === 'ENOENT' ? '文件已不存在，请重新定位或移出书架。' :
+      code === 'EACCES' ? '无法读取文件，请检查文件权限。' : '打开书籍失败，请检查文件。' };
+  }
+}
+async function relocateBook(id: string): Promise<PublicationResult | null> {
+  if (!window) return null;
+  const old = store.book(id);
+  if (!old) return { ok: false, message: '找不到原阅读记录。' };
+  const choice = await dialog.showOpenDialog(window, {
+    title: '重新定位书籍', properties: ['openFile'],
+    filters: [{ name: old.format.toUpperCase(), extensions: [old.format] }],
+  });
+  if (choice.canceled || !choice.filePaths[0]) return null;
+  const newPath = choice.filePaths[0];
+  try {
+    if (formatForPath(newPath) !== old.format) throw new BookError('新文件格式与原书籍不一致。');
+    const inspected = await inspectBook(newPath);
+    await store.relocateBook(id, newPath, inspected.record.size, inspected.record.modifiedAt, inspected.record.title, inspected.record.author);
+    return openPublication(id);
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : '重新定位失败，原记录已保留。' };
+  }
+}
+async function coverData(id: string): Promise<string | null> {
+  const key = store.book(id)?.coverKey;
+  if (!key) return null;
+  try {
+    const [bytes, mime] = await Promise.all([readFile(path.join(coverDir(), key)), readFile(path.join(coverDir(), `${key}.mime`), 'utf8')]);
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mime)) return null;
+    return `data:${mime};base64,${bytes.toString('base64')}`;
+  } catch { return null; }
+}
 
 async function openFile(filePath: string, requestedEncoding?: Encoding): Promise<OpenResult> {
   if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) return { ok: false, message: '文件路径无效，请重新选择文件。' };
@@ -26,6 +124,7 @@ async function openFile(filePath: string, requestedEncoding?: Encoding): Promise
     try { await store.updateFile(filePath, { encoding, offset, length: content.length, modifiedAt }); }
     catch { warning = '阅读状态保存失败；本次阅读仍可继续。'; }
     currentPath = filePath;
+    currentBookId = store.byPath(filePath)?.id ?? null;
     const state = store.snapshot();
     return { ok: true, book: { path: filePath, name: path.basename(filePath), content, encoding, offset,
       fontSize: state.fontSize, theme: state.theme, lineHeight: state.lineHeight, contentWidth: state.contentWidth,
@@ -56,7 +155,7 @@ async function relocateFile(event: Electron.IpcMainInvokeEvent, oldPath: string)
   if (choice.canceled || !choice.filePaths[0]) return null;
   const newPath = choice.filePaths[0];
   if (typeof newPath !== 'string' || !path.isAbsolute(newPath)) return { ok: false, message: '新文件路径无效。' };
-  if (normalizedKey(newPath) !== normalizedKey(oldPath) && store.record(newPath)) {
+  if (normalizedKey(newPath) !== normalizedKey(oldPath) && store.byPath(newPath)) {
     return { ok: false, message: '新路径已有阅读记录，请先处理该记录。' };
   }
   try {
@@ -65,6 +164,7 @@ async function relocateFile(event: Electron.IpcMainInvokeEvent, oldPath: string)
     const changed = Boolean(previous.length && (previous.length !== content.length || (previous.modifiedAt && previous.modifiedAt !== modifiedAt)));
     const record = await store.relocateFile(oldPath, newPath, content.length, modifiedAt);
     currentPath = newPath;
+    currentBookId = store.byPath(newPath)?.id ?? null;
     const state = store.snapshot();
     return { ok: true, book: { path: newPath, name: path.basename(newPath), content, encoding: record.encoding,
       offset: clampOffset(record.offset, content.length), fontSize: state.fontSize, theme: state.theme,
@@ -78,7 +178,7 @@ async function relocateFile(event: Electron.IpcMainInvokeEvent, oldPath: string)
 function createWindow(): void {
   let closeRequested = false;
   window = new BrowserWindow({
-    width: 1060, height: 760, minWidth: 580, minHeight: 400,
+    width: 1120, height: 790, minWidth: 580, minHeight: 400,
     backgroundColor: '#f8f6f1',
     webPreferences: {
       preload: path.join(baseDir, 'preload.cjs'),
@@ -123,9 +223,43 @@ app.whenReady().then(async () => {
   store = new StateStore(path.join(app.getPath('userData'), 'reader-state', 'state.json'));
   await store.load();
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    const external = /^https?:/i.test(details.url);
+    const localDev = Boolean(process.env.READER_DEV_URL) && details.url.startsWith(process.env.READER_DEV_URL!);
+    let outsideApp = false;
+    if (details.url.startsWith('file:')) {
+      try {
+        const relative = path.relative(path.join(baseDir, 'renderer'), fileURLToPath(details.url));
+        outsideApp = relative.startsWith('..') || path.isAbsolute(relative);
+      } catch { outsideApp = true; }
+    }
+    callback({ cancel: (external && !localDev) || outsideApp });
+  });
+  protocol.handle('vbbook', async (request) => {
+    const url = new URL(request.url);
+    const id = url.hostname === 'book' ? decodeURIComponent(url.pathname.slice(1)) : '';
+    const book = store.book(id);
+    if (!book || book.format !== 'pdf') return new Response('Not found', { status: 404 });
+    try {
+      const info = await stat(book.path);
+      const range = /^bytes=(\d+)-(\d*)$/i.exec(request.headers.get('range') ?? '');
+      const start = range ? Number(range[1]) : 0;
+      const end = range && range[2] ? Math.min(info.size - 1, Number(range[2])) : info.size - 1;
+      if (!info.isFile() || start < 0 || start >= info.size || end < start) return new Response(null, { status: 416 });
+      const stream = createReadStream(book.path, { start, end });
+      return new Response(Readable.toWeb(stream) as ReadableStream, {
+        status: range ? 206 : 200,
+        headers: {
+          'Content-Type': 'application/pdf', 'Content-Length': String(end - start + 1),
+          'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*',
+          ...(range ? { 'Content-Range': `bytes ${start}-${end}/${info.size}` } : {}),
+        },
+      });
+    } catch { return new Response('File unavailable', { status: 404 }); }
+  });
   ipcMain.handle('reader:restore', () => {
-    const lastFile = store.snapshot().lastFile;
-    return lastFile ? openFile(lastFile) : null;
+    const last = store.book(store.snapshot().lastBookId ?? '');
+    return last?.format === 'txt' ? openFile(last.path) : null;
   });
   ipcMain.handle('reader:choose', chooseFile);
   ipcMain.handle('reader:relocate', relocateFile);
@@ -148,6 +282,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('reader:remove-recent', async (_event, filePath: string) => {
     if (!store.record(filePath)) return;
     if (currentPath === filePath) currentPath = null;
+    if (currentBookId === store.byPath(filePath)?.id) currentBookId = null;
     await store.removeFile(filePath);
   });
   ipcMain.handle('reader:add-bookmark', (_event, filePath: string, offset: number) => {
@@ -158,6 +293,36 @@ app.whenReady().then(async () => {
     if (filePath !== currentPath || typeof id !== 'string') throw new Error('没有正在阅读的文件。');
     return store.removeBookmark(filePath, id);
   });
+  ipcMain.handle('reader:choose-books', chooseBooks);
+  ipcMain.handle('reader:list-books', () => store.listBooks());
+  ipcMain.handle('reader:last-book-id', () => store.snapshot().lastBookId);
+  ipcMain.handle('reader:startup-warning', () => store.loadWarning());
+  ipcMain.handle('reader:open-publication', (_event, id: string) => openPublication(id));
+  ipcMain.handle('reader:read-publication', async (_event, id: string) => {
+    const book = store.book(id);
+    if (!book || book.id !== currentBookId || book.format !== 'epub') throw new Error('这本书尚未打开。');
+    return new Uint8Array(await readFile(book.path));
+  });
+  ipcMain.handle('reader:book-position', (_event, id: string, position: BookPosition) => {
+    if (id !== currentBookId || !position || store.book(id)?.format !== position.format) throw new Error('没有正在阅读的书籍。');
+    return store.savePosition(id, position);
+  });
+  ipcMain.handle('reader:add-book-mark', (_event, id: string, position: BookPosition) => {
+    if (id !== currentBookId || !position || store.book(id)?.format !== position.format) throw new Error('没有正在阅读的书籍。');
+    return store.addBookBookmark(id, position);
+  });
+  ipcMain.handle('reader:remove-book-mark', (_event, id: string, markId: string) => {
+    if (id !== currentBookId) throw new Error('没有正在阅读的书籍。');
+    return store.removeBookBookmark(id, markId);
+  });
+  ipcMain.handle('reader:remove-book', async (_event, id: string) => {
+    const key = store.book(id)?.coverKey;
+    if (currentBookId === id) { currentBookId = null; currentPath = null; }
+    await store.removeBook(id);
+    if (key) await Promise.allSettled([rm(path.join(coverDir(), key), { force: true }), rm(path.join(coverDir(), `${key}.mime`), { force: true })]);
+  });
+  ipcMain.handle('reader:relocate-book', (_event, id: string) => relocateBook(id));
+  ipcMain.handle('reader:cover-data', (_event, id: string) => coverData(id));
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) { finishingClose = false; createWindow(); } });
 });
