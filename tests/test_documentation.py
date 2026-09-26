@@ -17,10 +17,13 @@ class DocumentationTests(unittest.TestCase):
         product = (ROOT / "PRODUCT_DESIGN.md").read_text(encoding="utf-8")
         roadmap = product.split("## 下一大版本：", 1)[1].split("\n## ", 1)[0]
         acceptance = product.split("## 大版本验收标准", 1)[1].split("\n## ", 1)[0]
-        features = re.findall(r"^### \d+\. (.+)$", roadmap, re.MULTILINE)
+        numbered_features = re.findall(r"^### (\d+)\. (.+)$", roadmap, re.MULTILINE)
+        features = [name for _, name in numbered_features]
         accepted = set(re.findall(r"^- \*\*(.+?)\*\*：", acceptance, re.MULTILINE))
         self.assertGreaterEqual(len(features), 2, "major release needs distinct deliverables")
         self.assertEqual(len(features), len(set(features)), "deliverables must be unique")
+        self.assertEqual([int(number) for number, _ in numbered_features],
+                         list(range(1, len(features) + 1)), "deliverables must be numbered in order")
         for feature in features:
             with self.subTest(feature=feature):
                 self.assertIn(feature, accepted)
