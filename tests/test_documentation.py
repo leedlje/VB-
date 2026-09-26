@@ -13,16 +13,17 @@ MARKDOWN_HEADING = re.compile(r"^(#{1,6})\s+\S", re.MULTILINE)
 
 
 class DocumentationTests(unittest.TestCase):
-    def test_next_release_features_are_covered_by_technical_plan(self):
+    def test_major_release_features_have_acceptance_criteria(self):
         product = (ROOT / "PRODUCT_DESIGN.md").read_text(encoding="utf-8")
-        plan = (ROOT / "docs" / "TECHNICAL_PLAN.md").read_text(encoding="utf-8")
-        product_section = product.split("## 下一小版本：", 1)[1].split("\n## ", 1)[0]
-        plan_section = plan.split("## 下一小版本实施顺序", 1)[1].split("\n## ", 1)[0]
-        features = re.findall(r"^\d+\. \*\*(.+?)\*\*", product_section, re.MULTILINE)
-        self.assertTrue(features, "product roadmap should list next-release features")
+        roadmap = product.split("## 下一大版本：", 1)[1].split("\n## ", 1)[0]
+        acceptance = product.split("## 大版本验收标准", 1)[1].split("\n## ", 1)[0]
+        features = re.findall(r"^### \d+\. (.+)$", roadmap, re.MULTILINE)
+        accepted = set(re.findall(r"^- \*\*(.+?)\*\*：", acceptance, re.MULTILINE))
+        self.assertGreaterEqual(len(features), 2, "major release needs distinct deliverables")
+        self.assertEqual(len(features), len(set(features)), "deliverables must be unique")
         for feature in features:
             with self.subTest(feature=feature):
-                self.assertIn(feature, plan_section)
+                self.assertIn(feature, accepted)
 
     def test_project_documents_have_clear_heading_hierarchy(self):
         for document in sorted(DOCUMENTS):
