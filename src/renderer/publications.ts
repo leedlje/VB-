@@ -30,7 +30,7 @@ export async function createEpubView(host: HTMLElement, record: BookRecord, onPo
   const book = (ePub as unknown as () => EpubBook)();
   await book.open(Uint8Array.from(bytes).buffer);
   await book.ready;
-  const rendition = book.renderTo(host, { width: '100%', height: '100%', flow: 'paginated', spread: 'none', allowScriptedContent: false });
+  const rendition = book.renderTo(host, { width: '100%', height: '100%', manager: 'continuous', flow: 'scrolled-continuous', spread: 'none', allowScriptedContent: false });
   rendition.hooks.content.register((contents: { document: Document }) => sanitizeChapter(contents.document));
   let position: BookPosition = record.position.format === 'epub' ? record.position : { format: 'epub', cfi: '', chapter: '', percent: 0 };
   const spine = (book.spine as unknown as { spineItems: Array<{ index: number; href: string; load: (request: Function) => Promise<Document>; find: (query: string) => SearchHit[]; unload: () => void }> }).spineItems;

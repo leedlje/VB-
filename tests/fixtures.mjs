@@ -6,6 +6,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/6mQAAAAASUVORK5CYII=', 'base64');
 export async function writeEpub(filePath, options = {}) {
   const zip = new JSZip();
+  const longContent = options.long || options.longFirst ? Array.from({ length: 24 }, (_, index) => `<p>第 ${index + 1} 段，山海故事继续向前。沿着海岸走过灯塔、树林和小路，远处的山光照亮了整片海面。</p>`).join('') : '';
   zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
   zip.file('META-INF/container.xml', '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
   if (options.encrypted) zip.file('META-INF/encryption.xml', '<encryption/>');
@@ -20,8 +21,8 @@ ${options.fixed ? '<meta property="rendition:layout">pre-paginated</meta>' : ''}
 <item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/>
 </manifest><spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>`);
   zip.file('OEBPS/nav.xhtml', '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>目录</title></head><body><nav epub:type="toc" xmlns:epub="http://www.idpf.org/2007/ops"><ol><li><a href="chapter1.xhtml">第一章</a></li><li><a href="chapter2.xhtml">第二章</a></li></ol></nav></body></html>');
-  zip.file('OEBPS/chapter1.xhtml', `<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章</title></head><body><h1>第一章</h1><p>山海故事开始。寻找星辰。</p><img src="cover.png" alt="封面插图"/><p><a href="chapter2.xhtml">前往第二章</a></p>${options.malicious ? `<script>window.top.hacked=true</script><img src="${options.remoteUrl || 'https://example.com/tracker.png'}"/>` : ''}</body></html>`);
-  zip.file('OEBPS/chapter2.xhtml', '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>第二章</title></head><body><h1>第二章</h1><p>星辰落在海面。Star light over the sea.</p></body></html>');
+  zip.file('OEBPS/chapter1.xhtml', `<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章</title></head><body><h1>第一章</h1><p>山海故事开始。寻找星辰。</p><img src="cover.png" alt="封面插图"/><p><a href="chapter2.xhtml">前往第二章</a></p>${longContent}${options.malicious ? `<script>window.top.hacked=true</script><img src="${options.remoteUrl || 'https://example.com/tracker.png'}"/>` : ''}</body></html>`);
+  zip.file('OEBPS/chapter2.xhtml', `<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>第二章</title></head><body><h1>第二章</h1><p>星辰落在海面。Star light over the sea.</p>${options.long ? longContent : ''}</body></html>`);
   zip.file('OEBPS/cover.png', png);
   await writeFile(filePath, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
   return filePath;

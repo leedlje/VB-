@@ -62,7 +62,7 @@ test('EPUB chapter, image, search, bookmark and CFI survive restart; book script
   const server = createServer((_request, response) => { remoteRequests++; response.writeHead(200, { 'content-type': 'image/png' }); response.end(); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
-  const filePath = await writeEpub(path.join(dir, 'story.epub'), { malicious: true, remoteUrl: `http://127.0.0.1:${address.port}/tracker.png` });
+  const filePath = await writeEpub(path.join(dir, 'story.epub'), { malicious: true, longFirst: true, remoteUrl: `http://127.0.0.1:${address.port}/tracker.png` });
   let app;
   try {
     app = await launch(userData);
@@ -70,12 +70,12 @@ test('EPUB chapter, image, search, bookmark and CFI survive restart; book script
     await choose(app, [filePath]);
     await page.locator('#import-books').click();
     await page.locator('.shelf-title').click();
-    await page.locator('#publication-view iframe').waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('#publication-view iframe').first().waitFor({ state: 'visible', timeout: 15000 });
     if (process.env.VB_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.VB_SCREENSHOT_DIR, 'epub.png') });
     await page.waitForFunction(() => document.getElementById('progress').textContent.includes('%'));
     assert.equal(await page.evaluate(() => window.hacked ?? false), false);
     assert.equal(remoteRequests, 0);
-    assert.ok(await page.frameLocator('#publication-view iframe').locator('img[alt="封面插图"]').count() > 0);
+    assert.ok(await page.frameLocator('#publication-view iframe').first().locator('img[alt="封面插图"]').count() > 0);
     await page.locator('#chapters-toggle').click();
     assert.equal(await page.locator('#chapters-list li').count(), 2);
     await page.locator('#chapters-list li button').last().click();
@@ -104,12 +104,59 @@ test('EPUB chapter, image, search, bookmark and CFI survive restart; book script
     await app.close();
     app = await launch(userData);
     page = await app.firstWindow();
-    await page.locator('#publication-view iframe').waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('#publication-view iframe').first().waitFor({ state: 'visible', timeout: 15000 });
     await page.locator('#bookmarks-toggle').click();
     assert.equal(await page.locator('#bookmarks-list li').count(), 1);
   } finally {
     if (app) await app.close().catch(() => {});
     await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('EPUB scrolls vertically with the mouse wheel and places page controls below the reader', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'vb-epub-scroll-e2e-'));
+  const userData = path.join(dir, 'profile');
+  await mkdir(userData);
+  const filePath = await writeEpub(path.join(dir, 'long-story.epub'), { long: true });
+  let app;
+  try {
+    app = await launch(userData);
+    const page = await app.firstWindow();
+    await choose(app, [filePath]);
+    await page.locator('#import-books').click();
+    await page.locator('.shelf-title').click();
+    const scroll = page.locator('#publication-view .epub-container');
+    await scroll.waitFor({ state: 'visible', timeout: 15000 });
+    await page.waitForFunction(() => document.querySelector('#publication-view .epub-container').scrollHeight > document.querySelector('#publication-view .epub-container').clientHeight);
+    const metrics = await scroll.evaluate((element) => ({ overflowY: getComputedStyle(element).overflowY, overflowX: getComputedStyle(element).overflowX, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }));
+    assert.equal(metrics.overflowY, 'scroll');
+    assert.equal(metrics.overflowX, 'hidden');
+    assert.ok(metrics.scrollHeight > metrics.clientHeight);
+    const footer = await page.locator('#publication-footer').boundingBox();
+    const reader = await page.locator('.reader-layout').boundingBox();
+    assert.ok(footer && reader && footer.y >= reader.y + reader.height - 1);
+    assert.equal(await page.locator('#publication-controls').isVisible(), false);
+    const initial = await scroll.evaluate((element) => element.scrollTop);
+    const box = await scroll.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, 600);
+    await page.waitForFunction((start) => document.querySelector('#publication-view .epub-container').scrollTop > start, initial);
+    assert.equal(await scroll.evaluate((element) => element.scrollLeft), 0);
+    const afterWheel = await scroll.evaluate((element) => element.scrollTop);
+    await page.locator('#publication-next').click();
+    await page.waitForFunction((start) => document.querySelector('#publication-view .epub-container').scrollTop > start, afterWheel);
+    const afterNext = await scroll.evaluate((element) => element.scrollTop);
+    await page.locator('#publication-prev').click();
+    await page.waitForFunction((start) => document.querySelector('#publication-view .epub-container').scrollTop < start, afterNext);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    for (let index = 0; index < 20 && Number.parseInt(await page.locator('#progress').textContent(), 10) < 50; index++) {
+      await page.mouse.wheel(0, 700);
+      await page.waitForTimeout(80);
+    }
+    await page.waitForFunction(() => Number.parseInt(document.getElementById('progress').textContent, 10) >= 50);
+  } finally {
+    if (app) await app.close().catch(() => {});
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -218,7 +265,7 @@ test('moved EPUB reports the missing file and relinks without changing its book 
     await page.waitForFunction(() => document.getElementById('message').textContent.includes('文件已不存在'));
     await choose(app, [newPath]);
     await page.locator('button[aria-label^="重新定位 山海小书"]').click();
-    await page.locator('#publication-view iframe').waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('#publication-view iframe').first().waitFor({ state: 'visible', timeout: 15000 });
     const migrated = await state(userData);
     assert.equal(Object.keys(migrated.books)[0], id);
     assert.equal(migrated.books[id].path, newPath);

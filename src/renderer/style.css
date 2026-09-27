@@ -29,6 +29,7 @@ select:disabled { opacity: .5; }
 .settingsbar button { border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text); min-width: 34px; height: 32px; }
 .settingsbar button:hover { background: var(--hover); }
 .settingsbar output { min-width: 52px; text-align: center; color: var(--text); }
+.publication-footer { flex: none; justify-content: center; border-top: 1px solid var(--border); border-bottom: 0; }
 .searchbar input { width: min(380px, 40vw); }
 .searchbar span { min-width: 110px; color: var(--muted); font-size: 13px; }
 .searchbar button, .side-panel button { border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text); padding: 7px 10px; }
@@ -69,6 +70,7 @@ select:disabled { opacity: .5; }
 .shelf-actions button { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px; padding: 5px 7px; font-size: 12px; }
 .shelf-actions button:hover { background: var(--hover); }
 .publication-view { width: 100%; height: 100%; min-height: 0; }
+.publication-view .epub-container { overflow-x: hidden !important; overflow-y: scroll !important; }
 .publication-view iframe { border: none; }
 #pdf-controls { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 #pdf-page { width: 66px; }

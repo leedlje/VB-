@@ -39,8 +39,6 @@
         <button id="search-prev" type="button" disabled>上一处</button><button id="search-next" type="button" disabled>下一处</button>
       </div>
       <div id="publication-controls" class="settingsbar" hidden>
-        <button id="publication-prev" type="button">上一页</button><button id="publication-next" type="button">下一页</button>
-        <button id="chapters-toggle" type="button">目录</button>
         <span id="pdf-controls" hidden>第 <input id="pdf-page" type="number" min="1" value="1" aria-label="PDF 页码" /> / <output id="pdf-total">1</output> 页
         <button id="pdf-fit-page" type="button">适合页面</button><button id="pdf-fit-width" type="button">适合宽度</button>
         <button id="pdf-zoom-out" type="button">缩小</button><button id="pdf-zoom-in" type="button">放大</button></span>
@@ -61,6 +59,10 @@
         <article id="content" class="content" aria-label="书籍正文" hidden></article>
         <div id="publication-view" class="publication-view" hidden></div>
       </main>
+      </div>
+      <div id="publication-footer" class="settingsbar publication-footer" hidden>
+        <button id="publication-prev" type="button">上一页</button><button id="publication-next" type="button">下一页</button>
+        <button id="chapters-toggle" type="button">目录</button>
       </div>
       <div id="message" class="message" role="status" aria-live="polite" hidden></div>
     </div>

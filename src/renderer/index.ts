@@ -246,6 +246,7 @@ function clearBook(): void {
   ++publicationSearchGeneration;
   byId<HTMLElement>('publication-view').hidden = true;
   byId<HTMLElement>('publication-controls').hidden = true;
+  byId<HTMLElement>('publication-footer').hidden = true;
   byId<HTMLElement>('chapters-panel').hidden = true;
   byId<HTMLButtonElement>('smaller').disabled = byId<HTMLButtonElement>('larger').disabled = false;
   byId<HTMLButtonElement>('layout-toggle').disabled = false;
@@ -313,6 +314,7 @@ function showBook(book: OpenedBook): void {
   activePublication = null;
   byId<HTMLElement>('publication-view').hidden = true;
   byId<HTMLElement>('publication-controls').hidden = true;
+  byId<HTMLElement>('publication-footer').hidden = true;
   byId<HTMLElement>('shelf').hidden = true;
   byId<HTMLButtonElement>('smaller').disabled = byId<HTMLButtonElement>('larger').disabled = false;
   byId<HTMLButtonElement>('layout-toggle').disabled = false;
@@ -570,7 +572,8 @@ async function openShelfBook(id: string): Promise<void> {
   empty.hidden = true;
   byId<HTMLElement>('shelf').hidden = true;
   byId<HTMLElement>('publication-view').hidden = false;
-  byId<HTMLElement>('publication-controls').hidden = false;
+  byId<HTMLElement>('publication-controls').hidden = result.book.format !== 'pdf';
+  byId<HTMLElement>('publication-footer').hidden = false;
   byId<HTMLElement>('pdf-controls').hidden = result.book.format !== 'pdf';
   encoding.disabled = true;
   byId<HTMLButtonElement>('smaller').disabled = byId<HTMLButtonElement>('larger').disabled = result.book.format === 'pdf';
