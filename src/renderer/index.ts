@@ -614,7 +614,6 @@ async function openShelfBook(id: string): Promise<void> {
   }
 }
 
-byId<HTMLButtonElement>('open').addEventListener('click', () => { void chooseFile(); });
 byId<HTMLButtonElement>('shelf-toggle').addEventListener('click', () => { void showShelf(); });
 byId<HTMLButtonElement>('import-books').addEventListener('click', () => { void importBooks(); });
 byId<HTMLInputElement>('shelf-search').addEventListener('input', () => { void renderShelf(); });

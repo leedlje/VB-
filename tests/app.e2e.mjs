@@ -13,11 +13,17 @@ async function launch(userData) {
   return electron.launch({ executablePath, args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, READER_TEST_USER_DATA: userData } });
 }
 
-async function waitForSavedOffset(statePath) {
+async function openTxt(page) {
+  await page.locator('#shelf-toggle').waitFor();
+  await page.waitForLoadState('load');
+  await page.keyboard.press('Control+o');
+}
+
+async function waitForSavedOffset(statePath, bookPath) {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const state = JSON.parse(await readFile(statePath, 'utf8'));
-    if (Object.values(state.books).some((record) => record.position.offset > 0)) return state;
+    if (Object.values(state.books).some((record) => (!bookPath || record.path === bookPath) && record.position.offset > 0)) return state;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return JSON.parse(await readFile(statePath, 'utf8'));
@@ -35,9 +41,15 @@ test('real Electron window opens TXT, switches encoding, saves progress and rest
   try {
     app = await launch(userData);
     let page = await app.firstWindow();
-    await page.locator('#open').waitFor();
+    await page.locator('#shelf-toggle').waitFor();
+    assert.equal(await page.locator('#open').count(), 0);
+    const toolbarButtons = await page.locator('#shelf-toggle, #import-books').evaluateAll((buttons) => buttons.map((button) => {
+      const style = getComputedStyle(button);
+      return { background: style.backgroundColor, color: style.color, weight: style.fontWeight };
+    }));
+    assert.deepEqual(toolbarButtons[0], toolbarButtons[1]);
     await app.evaluate(({ dialog }, filePath) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filePath] }); }, utf8);
-    await page.locator('#open').click();
+    await openTxt(page);
     await page.locator('#content').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#book-title').textContent(), 'book.txt');
     assert.match(await page.locator('#content').textContent(), /第 1 行：中文阅读测试/);
@@ -58,7 +70,7 @@ test('real Electron window opens TXT, switches encoding, saves progress and rest
     assert.equal(await page.locator('#font-size').textContent(), '20');
     assert.ok(await page.locator('#viewport').evaluate((element) => element.scrollTop > 100), 'reading position must restore');
     await app.evaluate(({ dialog }, filePath) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filePath] }); }, gb);
-    await page.locator('#open').click();
+    await openTxt(page);
     await page.locator('#encoding').selectOption('gb18030');
     await page.waitForFunction(() => document.getElementById('content').textContent === '简体中文\n下一行');
     assert.equal(await page.locator('#content').textContent(), '简体中文\n下一行');
@@ -88,7 +100,7 @@ test('a multi-megabyte TXT remains scrollable', async () => {
     app = await launch(userData);
     const page = await app.firstWindow();
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, filePath);
-    await page.locator('#open').click();
+    await openTxt(page);
     await page.locator('#content').waitFor({ state: 'visible', timeout: 15000 });
     assert.ok((await page.locator('#content').textContent()).length > 2_000_000);
     await page.locator('#viewport').evaluate((element) => { element.scrollTop = 100000; });
@@ -111,7 +123,7 @@ test('recent reading, search, bookmarks and theme work in the Electron window', 
     app = await launch(userData);
     let page = await app.firstWindow();
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, filePath);
-    await page.locator('#open').click();
+    await openTxt(page);
     await page.locator('#content').waitFor({ state: 'visible' });
     await page.locator('#search-toggle').click();
     await page.locator('#search-input').fill('中文测试');
@@ -176,13 +188,15 @@ test('moved TXT can be relinked without losing its old record on canceled or inv
     app = await launch(userData);
     let page = await app.firstWindow();
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, otherPath);
-    await page.locator('#open').click();
+    await openTxt(page);
     await page.locator('#content').waitFor({ state: 'visible' });
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, oldPath);
-    await page.locator('#open').click();
+    await openTxt(page);
     await page.waitForFunction(() => document.getElementById('book-title').textContent === 'old.txt');
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await page.locator('#viewport').evaluate((element) => { element.scrollTop = 1600; });
-    await waitForSavedOffset(path.join(userData, 'reader-state', 'state.json'));
+    const beforeMove = await waitForSavedOffset(path.join(userData, 'reader-state', 'state.json'), oldPath);
+    assert.ok(Object.values(beforeMove.books).find((record) => record.path === oldPath)?.position.offset > 0);
     await page.locator('#bookmarks-toggle').click();
     await page.locator('#bookmark-add').click();
     await page.waitForFunction(() => document.querySelectorAll('#bookmarks-list li').length === 1);
@@ -246,7 +260,7 @@ test('keyboard shortcuts and layout settings survive restart and narrow windows'
   try {
     app = await launch(userData);
     let page = await app.firstWindow();
-    await page.locator('#open').waitFor();
+    await page.locator('#shelf-toggle').waitFor();
     await page.waitForLoadState('load');
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, filePath);
     await page.keyboard.press('Control+o');
@@ -338,7 +352,7 @@ test('relinking the active GB18030 book switches later progress writes to the ne
     app = await launch(userData);
     const page = await app.firstWindow();
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, oldPath);
-    await page.locator('#open').click();
+    await openTxt(page);
     await page.locator('#content').waitFor({ state: 'visible' });
     await page.locator('#encoding').selectOption('gb18030');
     await page.waitForFunction(() => document.getElementById('content').textContent.startsWith('简体中文'));
