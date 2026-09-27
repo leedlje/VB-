@@ -96,12 +96,14 @@ export async function createPdfView(host: HTMLElement, record: BookRecord, url: 
   container.append(pageFrame);
   host.replaceChildren(container);
   let position: BookPosition = { format: 'pdf', page: pageNumber, fraction, pageCount };
+  let wheelTurning = false;
+  let lastWheelTurn = -Infinity;
   const update = () => {
     fraction = Math.max(0, Math.min(1, container.scrollTop / Math.max(1, container.scrollHeight - container.clientHeight)));
     position = { format: 'pdf', page: pageNumber, fraction, pageCount };
     onPosition(position);
   };
-  container.addEventListener('scroll', update, { passive: true });
+  container.addEventListener('scroll', () => { if (!wheelTurning) update(); }, { passive: true });
   const render = async () => {
     const generation = ++renderGeneration;
     const page = await document.getPage(pageNumber);
@@ -129,6 +131,21 @@ export async function createPdfView(host: HTMLElement, record: BookRecord, url: 
     update();
   };
   await render();
+  container.addEventListener('wheel', (event) => {
+    if (event.ctrlKey || !event.deltaY || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    const maximum = Math.max(0, container.scrollHeight - container.clientHeight);
+    const direction = Math.sign(event.deltaY);
+    const atEdge = direction > 0 ? container.scrollTop >= maximum - 2 : container.scrollTop <= 2;
+    if (!atEdge) return;
+    event.preventDefault();
+    if (wheelTurning || performance.now() - lastWheelTurn < 350) return;
+    const nextPage = pageNumber + direction;
+    if (nextPage < 1 || nextPage > pageCount) return;
+    wheelTurning = true;
+    pageNumber = nextPage;
+    fraction = direction > 0 ? 0 : 1;
+    void render().finally(() => { wheelTurning = false; lastWheelTurn = performance.now(); });
+  }, { passive: false });
   return {
     pageCount,
     position: () => structuredClone(position),

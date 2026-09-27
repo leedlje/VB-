@@ -179,10 +179,38 @@ test('PDF page, zoom, search, bookmark and position survive restart; scanned PDF
     await page.waitForFunction(() => document.getElementById('pdf-total').textContent === '3');
     if (process.env.VB_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.VB_SCREENSHOT_DIR, 'pdf.png') });
     assert.equal(await page.locator('#pdf-total').textContent(), '3');
+    const pdfScroll = page.locator('.pdf-scroll');
+    await page.waitForFunction(() => {
+      const element = document.querySelector('.pdf-scroll');
+      return element.scrollHeight > element.clientHeight;
+    });
+    const pdfBox = await pdfScroll.boundingBox();
+    await page.mouse.move(pdfBox.x + pdfBox.width / 2, pdfBox.y + pdfBox.height / 2);
+    await page.mouse.wheel(0, 350);
+    await page.waitForFunction(() => document.querySelector('.pdf-scroll').scrollTop > 0);
+    assert.match(await page.locator('#progress').textContent(), /第 1 \/ 3 页/);
+    await pdfScroll.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await page.mouse.wheel(0, 350);
+    await page.waitForFunction(() => document.getElementById('progress').textContent.includes('第 2 / 3'));
+    await page.waitForTimeout(400);
+    await page.mouse.wheel(0, -350);
+    await page.waitForFunction(() => document.getElementById('progress').textContent.includes('第 1 / 3'));
+    assert.ok(await pdfScroll.evaluate((element) => element.scrollTop > 0));
     await page.locator('#pdf-page').fill('2');
     await page.locator('#pdf-page').press('Tab');
     await page.waitForFunction(() => document.getElementById('progress').textContent.includes('第 2 / 3'));
     await page.locator('#pdf-fit-page').click();
+    await page.waitForFunction(() => {
+      const element = document.querySelector('.pdf-scroll');
+      return element.scrollHeight <= element.clientHeight + 1;
+    });
+    await page.mouse.move(pdfBox.x + pdfBox.width / 2, pdfBox.y + pdfBox.height / 2);
+    await page.waitForTimeout(400);
+    await page.mouse.wheel(0, 350);
+    await page.waitForFunction(() => document.getElementById('progress').textContent.includes('第 3 / 3'));
+    await page.waitForTimeout(400);
+    await page.mouse.wheel(0, -350);
+    await page.waitForFunction(() => document.getElementById('progress').textContent.includes('第 2 / 3'));
     await page.locator('#pdf-fit-width').click();
     await page.locator('#pdf-zoom-in').click();
     await page.locator('#bookmarks-toggle').click();
