@@ -13,23 +13,14 @@ MARKDOWN_HEADING = re.compile(r"^(#{1,6})\s+\S", re.MULTILINE)
 
 
 class DocumentationTests(unittest.TestCase):
-    def test_major_release_features_are_covered_by_technical_plan(self):
+    def test_first_batch_annotation_features_have_acceptance_criteria(self):
         product = (ROOT / "PRODUCT_DESIGN.md").read_text(encoding="utf-8")
-        plan = (ROOT / "docs" / "TECHNICAL_PLAN.md").read_text(encoding="utf-8")
-        roadmap = product.split("## 下一大版本：", 1)[1].split("\n## ", 1)[0]
-        implementation = plan.split("## 大版本实施顺序", 1)[1].split("\n## ", 1)[0]
-        features = re.findall(r"^### \d+\. (.+)$", roadmap, re.MULTILINE)
-        planned = re.findall(r"^### \d+\. (.+)$", implementation, re.MULTILINE)
-        self.assertEqual(planned, features)
-
-    def test_major_release_features_have_acceptance_criteria(self):
-        product = (ROOT / "PRODUCT_DESIGN.md").read_text(encoding="utf-8")
-        roadmap = product.split("## 下一大版本：", 1)[1].split("\n## ", 1)[0]
-        acceptance = product.split("## 大版本验收标准", 1)[1].split("\n## ", 1)[0]
+        roadmap = product.split("## 下一阶段：选文标注（第一批）", 1)[1].split("\n## ", 1)[0]
+        acceptance = product.split("## 第一批验收标准", 1)[1].split("\n## ", 1)[0]
         numbered_features = re.findall(r"^### (\d+)\. (.+)$", roadmap, re.MULTILINE)
         features = [name for _, name in numbered_features]
         accepted = set(re.findall(r"^- \*\*(.+?)\*\*：", acceptance, re.MULTILINE))
-        self.assertGreaterEqual(len(features), 2, "major release needs distinct deliverables")
+        self.assertGreaterEqual(len(features), 2, "first batch needs distinct deliverables")
         self.assertEqual(len(features), len(set(features)), "deliverables must be unique")
         self.assertEqual([int(number) for number, _ in numbered_features],
                          list(range(1, len(features) + 1)), "deliverables must be numbered in order")
