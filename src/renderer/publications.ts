@@ -2,7 +2,8 @@ import ePub, { type Book as EpubBook, type Rendition } from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
-import type { BookPosition, BookRecord } from '../shared/types.ts';
+import { ANNOTATION_CONTEXT, findTextAnchor, textContext } from '../shared/annotations.ts';
+import type { Annotation, AnnotationAnchor, AnnotationDraft, BookPosition, BookRecord } from '../shared/types.ts';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 export interface SearchHit { label: string; position: BookPosition }
@@ -15,7 +16,31 @@ export interface PublicationView {
   setAppearance(fontSize: number, lineHeight: number, contentWidth: number, theme: string): void;
   chapters(): { label: string; target: string }[];
   jumpChapter(target: string): Promise<void>;
+  setAnnotations?(marks: Annotation[], changed: boolean): Promise<{ id: string; anchor: AnnotationAnchor | null }[]>;
   dispose(): Promise<void>;
+}
+interface EpubContents { document: Document; sectionIndex: number; range(cfi: string): Range }
+function textOffset(body: HTMLElement, node: Node, offset: number): number {
+  const walker = body.ownerDocument.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  let position = 0;
+  for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+    if (current === node) return position + offset;
+    position += current.textContent?.length ?? 0;
+  }
+  throw new Error('Selected text is outside the chapter');
+}
+function rangeAt(body: HTMLElement, start: number, end: number): Range | null {
+  const walker = body.ownerDocument.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const range = body.ownerDocument.createRange();
+  let cursor = 0;
+  let began = false;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const length = node.textContent?.length ?? 0;
+    if (!began && start <= cursor + length) { range.setStart(node, start - cursor); began = true; }
+    if (began && end <= cursor + length) { range.setEnd(node, end - cursor); return range; }
+    cursor += length;
+  }
+  return null;
 }
 function sanitizeChapter(document: Document): void {
   document.querySelectorAll('script,iframe,object,embed,form,video,audio,meta[http-equiv]').forEach((element) => element.remove());
@@ -26,14 +51,31 @@ function sanitizeChapter(document: Document): void {
     }
   });
 }
-export async function createEpubView(host: HTMLElement, record: BookRecord, onPosition: (value: BookPosition) => void, bytes: Uint8Array): Promise<PublicationView> {
+export async function createEpubView(host: HTMLElement, record: BookRecord, onPosition: (value: BookPosition) => void, bytes: Uint8Array,
+  onSelection: (draft: AnnotationDraft, rect: DOMRect) => void, onAnnotationClick: (id: string) => void): Promise<PublicationView> {
   const book = (ePub as unknown as () => EpubBook)();
   await book.open(Uint8Array.from(bytes).buffer);
   await book.ready;
   const rendition = book.renderTo(host, { width: '100%', height: '100%', manager: 'continuous', flow: 'scrolled-continuous', spread: 'none', allowScriptedContent: false });
   rendition.hooks.content.register((contents: { document: Document }) => sanitizeChapter(contents.document));
   let position: BookPosition = record.position.format === 'epub' ? record.position : { format: 'epub', cfi: '', chapter: '', percent: 0 };
-  const spine = (book.spine as unknown as { spineItems: Array<{ index: number; href: string; load: (request: Function) => Promise<Document>; find: (query: string) => SearchHit[]; unload: () => void }> }).spineItems;
+  const spine = (book.spine as unknown as { spineItems: Array<{ index: number; href: string; load: (request: Function) => Promise<Document>; find: (query: string) => SearchHit[]; unload: () => void; cfiFromRange: (range: Range) => string }> }).spineItems;
+  rendition.on('selected', (cfi: string, contents: EpubContents) => {
+    try {
+      const section = spine[contents.sectionIndex];
+      const range = contents.range(cfi);
+      const body = contents.document.body;
+      const selected = range.toString();
+      if (!section || !body || !selected.trim() || selected.length > 500) return;
+      const start = textOffset(body, range.startContainer, range.startOffset);
+      const context = textContext(body.textContent ?? '', start, start + selected.length);
+      const frame = Array.from(host.querySelectorAll('iframe')).find((item) => item.contentDocument === contents.document);
+      const selectionRect = range.getBoundingClientRect();
+      const frameRect = frame?.getBoundingClientRect();
+      const rect = new DOMRect((frameRect?.left ?? 0) + selectionRect.left, (frameRect?.top ?? 0) + selectionRect.top, selectionRect.width, selectionRect.height);
+      onSelection({ anchor: { format: 'epub', cfi, chapter: section.href }, text: selected, ...context, note: '' }, rect);
+    } catch { /* A detached chapter can invalidate its old selection. */ }
+  });
   rendition.on('relocated', (location: { start: { cfi: string; href: string; index: number; displayed: { page: number; total: number } } }) => {
     const within = location.start.displayed.total ? (location.start.displayed.page - 1) / location.start.displayed.total : 0;
     position = { format: 'epub', cfi: location.start.cfi, chapter: location.start.href, percent: Math.min(100, Math.round((location.start.index + within) / Math.max(1, spine.length) * 100)) };
@@ -48,6 +90,7 @@ export async function createEpubView(host: HTMLElement, record: BookRecord, onPo
     }
   };
   collect(book.navigation.toc);
+  const drawn = new Set<string>();
   return {
     position: () => structuredClone(position),
     go: async (target) => { if (target.format === 'epub') await rendition.display(target.cfi || target.chapter || undefined); },
@@ -72,6 +115,37 @@ export async function createEpubView(host: HTMLElement, record: BookRecord, onPo
     },
     chapters: () => entries,
     jumpChapter: (target) => rendition.display(target),
+    setAnnotations: async (marks, changed) => {
+      for (const cfi of drawn) rendition.annotations.remove(cfi, 'highlight');
+      drawn.clear();
+      const resolved: { id: string; anchor: AnnotationAnchor | null }[] = [];
+      for (const mark of marks) {
+        if (mark.anchor.format !== 'epub') continue;
+        const savedAnchor = mark.anchor;
+        const section = spine.find((item) => item.href === savedAnchor.chapter);
+        if (!section) { resolved.push({ id: mark.id, anchor: null }); continue; }
+        try {
+          const document = await section.load(book.load.bind(book));
+          sanitizeChapter(document);
+          const body = document.querySelector('body') as HTMLElement | null;
+          if (!body) throw new Error('Missing chapter body');
+          let preferred: number | undefined;
+          try {
+            const existing = await book.getRange(savedAnchor.cfi);
+            if (existing && body.contains(existing.startContainer) && existing.toString() === mark.text) preferred = textOffset(body, existing.startContainer, existing.startOffset);
+          } catch { /* Recover from an invalid CFI using the saved text and context. */ }
+          const start = findTextAnchor(body.textContent ?? '', mark, preferred, changed || mark.status === 'unresolved');
+          if (start === null) { resolved.push({ id: mark.id, anchor: null }); continue; }
+          const range = rangeAt(body, start, start + mark.text.length);
+          if (!range || range.toString() !== mark.text) { resolved.push({ id: mark.id, anchor: null }); continue; }
+          const cfi = preferred === start ? savedAnchor.cfi : section.cfiFromRange(range);
+          rendition.annotations.highlight(cfi, { id: mark.id }, () => onAnnotationClick(mark.id), 'annotation-highlight', { fill: '#e5c45f', 'fill-opacity': '0.48' });
+          drawn.add(cfi);
+          resolved.push({ id: mark.id, anchor: { format: 'epub', cfi, chapter: section.href } });
+        } catch { resolved.push({ id: mark.id, anchor: null }); }
+      }
+      return resolved;
+    },
     dispose: async () => { rendition.destroy(); book.destroy(); host.replaceChildren(); },
   };
 }

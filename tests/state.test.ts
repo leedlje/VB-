@@ -40,7 +40,7 @@ test('version 1 state migrates without losing progress and new fields have defau
       files: { [book]: { path: book, encoding: 'gb18030', offset: 72 } } }));
     const store = new StateStore(filePath);
     const state = await store.load();
-    assert.equal(state.version, 4);
+    assert.equal(state.version, 5);
     assert.equal(state.books[state.lastBookId!].path, book);
     assert.equal(state.fontSize, 24);
     assert.equal(state.theme, 'light');
@@ -52,7 +52,7 @@ test('version 1 state migrates without losing progress and new fields have defau
     assert.equal(JSON.parse(await readFile(`${filePath}.v1.bak`, 'utf8')).version, 1);
     await store.updateFile(book, { length: 100 });
     assert.equal(store.record(book)?.offset, 72);
-    assert.equal(JSON.parse(await readFile(filePath, 'utf8')).version, 4);
+    assert.equal(JSON.parse(await readFile(filePath, 'utf8')).version, 5);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -62,7 +62,7 @@ test('version 2 bookmarks, theme and progress migrate with layout defaults', () 
     [book]: { path: book, encoding: 'utf8', offset: 45, length: 100, recentAt: 123,
       modifiedAt: 456, bookmarks: [{ id: 'saved', offset: 40, createdAt: 789 }] },
   } });
-  assert.equal(state.version, 4);
+  assert.equal(state.version, 5);
   assert.equal(state.books[state.lastBookId!].path, book);
   assert.equal(state.fontSize, 22);
   assert.equal(state.theme, 'sepia');

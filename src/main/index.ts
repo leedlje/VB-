@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { BookError, normalizedKey, readBook } from './book.ts';
 import { inspectBook, formatForPath } from './inspect.ts';
 import { StateStore } from './state.ts';
-import { clampOffset, type BookPosition, type Encoding, type ImportResult, type OpenResult, type PublicationResult, type Theme } from '../shared/types.ts';
+import { clampOffset, type AnnotationAnchor, type AnnotationDraft, type BookPosition, type Encoding, type ImportResult, type OpenResult, type PublicationResult, type Theme } from '../shared/types.ts';
 
 const baseDir = __dirname;
 let window: BrowserWindow | null = null;
@@ -74,7 +74,8 @@ async function openPublication(id: string): Promise<PublicationResult> {
     currentBookId = id;
     currentPath = book.format === 'txt' ? book.path : null;
     const touched = await store.touch(id);
-    return { ok: true, book: touched, url: `vbbook://book/${encodeURIComponent(id)}` };
+    return { ok: true, book: touched, url: `vbbook://book/${encodeURIComponent(id)}`,
+      changed: Boolean(book.size && (book.size !== info.size || book.modifiedAt !== info.mtimeMs)) };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     return { ok: false, message: error instanceof BookError ? error.message :
@@ -126,9 +127,9 @@ async function openFile(filePath: string, requestedEncoding?: Encoding): Promise
     currentPath = filePath;
     currentBookId = store.byPath(filePath)?.id ?? null;
     const state = store.snapshot();
-    return { ok: true, book: { path: filePath, name: path.basename(filePath), content, encoding, offset,
+    return { ok: true, book: { id: currentBookId ?? '', path: filePath, name: path.basename(filePath), content, encoding, offset,
       fontSize: state.fontSize, theme: state.theme, lineHeight: state.lineHeight, contentWidth: state.contentWidth,
-      bookmarks: store.record(filePath)?.bookmarks ?? [],
+      bookmarks: store.record(filePath)?.bookmarks ?? [], annotations: currentBookId ? store.book(currentBookId)?.annotations ?? [] : [],
       changed: Boolean(previous?.length && (previous.length !== content.length || (previous.modifiedAt && previous.modifiedAt !== modifiedAt))), warning } };
   } catch (error) {
     return { ok: false, message: error instanceof BookError ? error.message : '打开文件时发生错误，请重试。' };
@@ -166,9 +167,10 @@ async function relocateFile(event: Electron.IpcMainInvokeEvent, oldPath: string)
     currentPath = newPath;
     currentBookId = store.byPath(newPath)?.id ?? null;
     const state = store.snapshot();
-    return { ok: true, book: { path: newPath, name: path.basename(newPath), content, encoding: record.encoding,
+    return { ok: true, book: { id: currentBookId ?? '', path: newPath, name: path.basename(newPath), content, encoding: record.encoding,
       offset: clampOffset(record.offset, content.length), fontSize: state.fontSize, theme: state.theme,
-      lineHeight: state.lineHeight, contentWidth: state.contentWidth, bookmarks: record.bookmarks, changed } };
+      lineHeight: state.lineHeight, contentWidth: state.contentWidth, bookmarks: record.bookmarks,
+      annotations: currentBookId ? store.book(currentBookId)?.annotations ?? [] : [], changed } };
   } catch (error) {
     return { ok: false, message: error instanceof BookError ? error.message : error instanceof Error &&
       error.message.includes('已有阅读记录') ? error.message : '重新定位失败，原阅读记录已保留。' };
@@ -323,6 +325,22 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('reader:relocate-book', (_event, id: string) => relocateBook(id));
   ipcMain.handle('reader:cover-data', (_event, id: string) => coverData(id));
+  ipcMain.handle('reader:add-annotation', (_event, id: string, draft: AnnotationDraft) => {
+    if (id !== currentBookId) throw new Error('没有正在阅读的书籍。');
+    return store.addAnnotation(id, draft);
+  });
+  ipcMain.handle('reader:update-annotation-note', (_event, id: string, annotationId: string, note: string) => {
+    if (id !== currentBookId) throw new Error('没有正在阅读的书籍。');
+    return store.updateAnnotationNote(id, annotationId, note);
+  });
+  ipcMain.handle('reader:remove-annotation', (_event, id: string, annotationId: string) => {
+    if (id !== currentBookId) throw new Error('没有正在阅读的书籍。');
+    return store.removeAnnotation(id, annotationId);
+  });
+  ipcMain.handle('reader:set-annotation-anchor', (_event, id: string, annotationId: string, anchor: AnnotationAnchor | null) => {
+    if (id !== currentBookId) throw new Error('没有正在阅读的书籍。');
+    return store.setAnnotationAnchor(id, annotationId, anchor);
+  });
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) { finishingClose = false; createWindow(); } });
 });

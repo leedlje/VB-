@@ -52,7 +52,7 @@ test('installed 1.2.0 profile upgrades to VB阅读器 without losing TXT reading
     assert.equal(await page.locator('#bookmarks-list li').count(), 1);
     assert.ok(await page.locator('#viewport').evaluate((element) => element.scrollTop > 0));
     const newState = JSON.parse(await readFile(statePath, 'utf8'));
-    assert.equal(newState.version, 4);
+    assert.equal(newState.version, 5);
     assert.equal(Object.values(newState.books)[0].bookmarks.length, 1);
     assert.equal(JSON.parse(await readFile(`${statePath}.v3.bak`, 'utf8')).version, 3);
     assert.equal(await readFile(filePath, 'utf8'), original);

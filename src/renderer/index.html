@@ -15,6 +15,7 @@
         <button id="recent-toggle" class="icon-button text-button" type="button" aria-controls="recent-panel" aria-expanded="false">最近阅读</button>
         <button id="search-toggle" class="icon-button text-button" type="button" aria-controls="searchbar" aria-expanded="false" title="Ctrl+F">搜索</button>
         <button id="bookmarks-toggle" class="icon-button text-button" type="button" aria-controls="bookmarks-panel" aria-expanded="false">书签</button>
+        <button id="annotations-toggle" class="icon-button text-button" type="button" aria-controls="annotations-panel" aria-expanded="false" disabled>标注</button>
         <button id="layout-toggle" class="icon-button text-button" type="button" aria-controls="layoutbar" aria-expanded="false">排版</button>
         <div class="divider"></div>
         <label class="encoding-label" for="encoding">编码</label>
@@ -46,6 +47,7 @@
       <div class="reader-layout">
       <aside id="recent-panel" class="side-panel" hidden><h2>最近阅读</h2><p id="recent-empty">还没有阅读记录。</p><ul id="recent-list"></ul></aside>
       <aside id="bookmarks-panel" class="side-panel" hidden><h2>书签</h2><button id="bookmark-add" type="button" disabled>添加当前位置</button><p id="bookmarks-empty">当前文件还没有书签。</p><ul id="bookmarks-list"></ul></aside>
+      <aside id="annotations-panel" class="side-panel" hidden><h2>标注</h2><p id="annotations-empty">当前书籍还没有标注。选中文字后可以高亮或写想法。</p><ul id="annotations-list"></ul></aside>
       <aside id="chapters-panel" class="side-panel" hidden><h2>目录</h2><ul id="chapters-list"></ul></aside>
       <main id="viewport" class="viewport" tabindex="-1">
         <section id="shelf" class="shelf" hidden><div class="shelf-heading"><div><h1>我的书架</h1><p>本地书籍，随时接着读。</p></div></div>
@@ -64,6 +66,8 @@
         <button id="chapters-toggle" type="button">目录</button>
       </div>
       <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+      <div id="selection-actions" class="selection-actions" role="group" aria-label="选文操作" hidden><button id="selection-highlight" type="button">高亮</button><button id="selection-note" type="button">写想法</button></div>
+      <dialog id="annotation-editor" class="annotation-editor" aria-labelledby="annotation-editor-title"><form method="dialog"><h2 id="annotation-editor-title">写想法</h2><blockquote id="annotation-preview"></blockquote><label for="annotation-note">想法</label><textarea id="annotation-note" maxlength="2000" rows="6" placeholder="记录此刻的想法"></textarea><div class="dialog-actions"><button id="annotation-cancel" type="button">取消</button><button id="annotation-save" class="primary" type="button">保存</button></div></form></dialog>
     </div>
     <script type="module" src="./index.ts"></script>
   </body>

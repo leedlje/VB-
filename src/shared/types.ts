@@ -10,24 +10,30 @@ export type BookPosition =
   | { format: 'epub'; cfi: string; chapter: string; percent: number }
   | { format: 'pdf'; page: number; fraction: number; pageCount: number };
 export interface BookBookmark { id: string; createdAt: number; position: BookPosition }
+export type AnnotationAnchor = { format: 'txt'; start: number; end: number } | { format: 'epub'; cfi: string; chapter: string };
+export interface Annotation {
+  id: string; bookId: string; anchor: AnnotationAnchor; text: string; prefix: string; suffix: string;
+  note: string; status: 'anchored' | 'unresolved'; createdAt: number; updatedAt: number;
+}
+export type AnnotationDraft = Pick<Annotation, 'anchor' | 'text' | 'prefix' | 'suffix' | 'note'>;
 export interface BookRecord {
   id: string; format: BookFormat; path: string; title: string; author: string;
   coverKey: string | null; importedAt: number; recentAt: number; size: number;
-  modifiedAt: number; position: BookPosition; bookmarks: BookBookmark[];
+  modifiedAt: number; position: BookPosition; bookmarks: BookBookmark[]; annotations: Annotation[];
 }
 export interface ReaderState {
-  version: 4; lastBookId: string | null; fontSize: number; theme: Theme;
+  version: 5; lastBookId: string | null; fontSize: number; theme: Theme;
   lineHeight: number; contentWidth: number; books: Record<string, BookRecord>;
 }
 
 export interface OpenedBook {
-  path: string; name: string; content: string; encoding: Encoding; offset: number;
+  id: string; path: string; name: string; content: string; encoding: Encoding; offset: number;
   fontSize: number; theme: Theme; lineHeight: number; contentWidth: number;
-  bookmarks: Bookmark[]; changed: boolean; warning?: string;
+  bookmarks: Bookmark[]; annotations: Annotation[]; changed: boolean; warning?: string;
 }
 export type OpenResult = { ok: true; book: OpenedBook } | { ok: false; message: string };
 export interface ImportResult { added: BookRecord[]; errors: { path: string; message: string }[] }
-export type PublicationResult = { ok: true; book: BookRecord; url: string } | { ok: false; message: string };
+export type PublicationResult = { ok: true; book: BookRecord; url: string; changed: boolean } | { ok: false; message: string };
 export interface ReaderApi {
   restoreLastFile(): Promise<OpenResult | null>;
   chooseFile(): Promise<OpenResult | null>;
@@ -56,6 +62,10 @@ export interface ReaderApi {
   removeBook(id: string): Promise<void>;
   relocateBook(id: string): Promise<PublicationResult | null>;
   coverData(id: string): Promise<string | null>;
+  addAnnotation(id: string, draft: AnnotationDraft): Promise<Annotation[]>;
+  updateAnnotationNote(id: string, annotationId: string, note: string): Promise<Annotation[]>;
+  removeAnnotation(id: string, annotationId: string): Promise<Annotation[]>;
+  setAnnotationAnchor(id: string, annotationId: string, anchor: AnnotationAnchor | null): Promise<Annotation[]>;
 }
 
 declare global { interface Window { reader: ReaderApi } }

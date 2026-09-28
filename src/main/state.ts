@@ -2,7 +2,8 @@ import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { normalizedKey } from './book.ts';
-import { clampOffset, type BookBookmark, type BookFormat, type BookPosition, type BookRecord, type Bookmark, type Encoding, type FileRecord, type ReaderState, type Theme } from '../shared/types.ts';
+import { ANNOTATION_CONTEXT, MAX_ANNOTATION_NOTE, MAX_ANNOTATION_TEXT } from '../shared/annotations.ts';
+import { clampOffset, type Annotation, type AnnotationAnchor, type AnnotationDraft, type BookBookmark, type BookFormat, type BookPosition, type BookRecord, type Bookmark, type Encoding, type FileRecord, type ReaderState, type Theme } from '../shared/types.ts';
 
 export const DEFAULT_FONT_SIZE = 18;
 export const MIN_FONT_SIZE = 12;
@@ -10,7 +11,7 @@ export const MAX_FONT_SIZE = 32;
 export const DEFAULT_LINE_HEIGHT = 1.9;
 export const DEFAULT_CONTENT_WIDTH = 820;
 export const THEMES: Theme[] = ['light', 'dark', 'sepia'];
-export function freshState(): ReaderState { return { version: 4, lastBookId: null, fontSize: DEFAULT_FONT_SIZE, theme: 'light', lineHeight: DEFAULT_LINE_HEIGHT, contentWidth: DEFAULT_CONTENT_WIDTH, books: {} }; }
+export function freshState(): ReaderState { return { version: 5, lastBookId: null, fontSize: DEFAULT_FONT_SIZE, theme: 'light', lineHeight: DEFAULT_LINE_HEIGHT, contentWidth: DEFAULT_CONTENT_WIDTH, books: {} }; }
 export function clampFontSize(size: number): number { return Number.isFinite(size) ? Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(size))) : DEFAULT_FONT_SIZE; }
 export function clampLineHeight(value: number): number { return Number.isFinite(value) ? Math.max(1.4, Math.min(2.4, Math.round(value * 10) / 10)) : DEFAULT_LINE_HEIGHT; }
 export function clampContentWidth(value: number): number { return Number.isFinite(value) ? Math.max(560, Math.min(1040, Math.round(value / 20) * 20)) : DEFAULT_CONTENT_WIDTH; }
@@ -24,6 +25,30 @@ function parsePosition(value: unknown, format: BookFormat): BookPosition {
   if (format === 'txt') return { format, offset: clampOffset(Number(source.offset), Number.MAX_SAFE_INTEGER), length: clampOffset(Number(source.length), Number.MAX_SAFE_INTEGER), encoding: source.encoding === 'gb18030' ? 'gb18030' : 'utf8' };
   if (format === 'epub') return { format, cfi: typeof source.cfi === 'string' ? source.cfi : '', chapter: typeof source.chapter === 'string' ? source.chapter : '', percent: Math.max(0, Math.min(100, nonNegative(source.percent))) };
   return { format, page: Math.max(1, Math.trunc(nonNegative(source.page) || 1)), fraction: Math.max(0, Math.min(1, nonNegative(source.fraction))), pageCount: Math.max(1, Math.trunc(nonNegative(source.pageCount) || 1)) };
+}
+function parseAnchor(value: unknown, format: BookFormat): AnnotationAnchor | null {
+  if (!value || typeof value !== 'object') return null;
+  const anchor = value as Record<string, unknown>;
+  if (format === 'txt' && anchor.format === 'txt' && Number.isSafeInteger(anchor.start) && Number.isSafeInteger(anchor.end)
+      && Number(anchor.start) >= 0 && Number(anchor.end) > Number(anchor.start)) {
+    return { format: 'txt', start: Number(anchor.start), end: Number(anchor.end) };
+  }
+  if (format === 'epub' && anchor.format === 'epub' && typeof anchor.cfi === 'string' && /^epubcfi\(/.test(anchor.cfi)
+      && anchor.cfi.length <= 1000 && typeof anchor.chapter === 'string' && anchor.chapter.length <= 500) {
+    return { format: 'epub', cfi: anchor.cfi, chapter: anchor.chapter };
+  }
+  return null;
+}
+function parseAnnotation(value: unknown, bookId: string, format: BookFormat): Annotation | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as Partial<Annotation>;
+  const anchor = parseAnchor(item.anchor, format);
+  if (!validId(item.id) || item.bookId !== bookId || !anchor || typeof item.text !== 'string' || !item.text.trim()
+      || item.text.length > MAX_ANNOTATION_TEXT || typeof item.prefix !== 'string' || item.prefix.length > ANNOTATION_CONTEXT
+      || typeof item.suffix !== 'string' || item.suffix.length > ANNOTATION_CONTEXT
+      || typeof item.note !== 'string' || item.note.length > MAX_ANNOTATION_NOTE) return null;
+  return { id: item.id, bookId, anchor, text: item.text, prefix: item.prefix, suffix: item.suffix, note: item.note,
+    status: item.status === 'unresolved' ? 'unresolved' : 'anchored', createdAt: nonNegative(item.createdAt), updatedAt: nonNegative(item.updatedAt) };
 }
 function parseRecord(value: unknown): BookRecord | null {
   if (!value || typeof value !== 'object') return null;
@@ -41,18 +66,22 @@ function parseRecord(value: unknown): BookRecord | null {
     coverKey: validId(source.coverKey) ? source.coverKey : null,
     importedAt: nonNegative(source.importedAt), recentAt: nonNegative(source.recentAt),
     size: nonNegative(source.size), modifiedAt: nonNegative(source.modifiedAt), position, bookmarks: marks,
+    annotations: Array.isArray(source.annotations) ? source.annotations.flatMap((item) => {
+      const parsed = parseAnnotation(item, source.id!, source.format!);
+      return parsed ? [parsed] : [];
+    }) : [],
   };
 }
 export function parseState(value: unknown): ReaderState {
   const state = freshState();
   if (!value || typeof value !== 'object') return state;
   const source = value as Record<string, unknown>;
-  if (![1, 2, 3, 4].includes(Number(source.version))) return state;
+  if (![1, 2, 3, 4, 5].includes(Number(source.version))) return state;
   if (typeof source.fontSize === 'number') state.fontSize = clampFontSize(source.fontSize);
   if (THEMES.includes(source.theme as Theme)) state.theme = source.theme as Theme;
   if (typeof source.lineHeight === 'number') state.lineHeight = clampLineHeight(source.lineHeight);
   if (typeof source.contentWidth === 'number') state.contentWidth = clampContentWidth(source.contentWidth);
-  if (source.version === 4 && source.books && typeof source.books === 'object' && !Array.isArray(source.books)) {
+  if ((source.version === 4 || source.version === 5) && source.books && typeof source.books === 'object' && !Array.isArray(source.books)) {
     const paths = new Set<string>();
     for (const raw of Object.values(source.books)) {
       const record = parseRecord(raw);
@@ -72,7 +101,7 @@ export function parseState(value: unknown): ReaderState {
         id, format: 'txt', path: entry.path, title: path.parse(entry.path).name, author: '', coverKey: null,
         importedAt: nonNegative(entry.recentAt), recentAt: nonNegative(entry.recentAt), size: 0,
         modifiedAt: nonNegative(entry.modifiedAt),
-        position: { format: 'txt', offset: clampOffset(entry.offset ?? 0, length || Number.MAX_SAFE_INTEGER), length, encoding: entry.encoding as Encoding }, bookmarks,
+        position: { format: 'txt', offset: clampOffset(entry.offset ?? 0, length || Number.MAX_SAFE_INTEGER), length, encoding: entry.encoding as Encoding }, bookmarks, annotations: [],
       };
       if (typeof source.lastFile === 'string' && normalizedKey(source.lastFile) === normalizedKey(entry.path)) state.lastBookId = id;
     }
@@ -91,20 +120,36 @@ export class StateStore {
   constructor(filePath: string, onError: (error: Error) => void = console.error) { this.filePath = filePath; this.onError = onError; }
   async load(): Promise<ReaderState> {
     this.warning = null;
+    this.writesBlocked = false;
     try {
       const raw = await readFile(this.filePath, 'utf8');
       let version = 'invalid';
       try {
         const parsed = JSON.parse(raw) as { version?: unknown };
-        if (![1, 2, 3, 4].includes(Number(parsed.version))) throw new Error('阅读状态版本无法识别。');
+        if (![1, 2, 3, 4, 5].includes(Number(parsed.version))) throw new Error('阅读状态版本无法识别。');
         version = String(parsed.version);
         this.state = parseState(parsed);
+        if (version === '5' && parsed && typeof parsed === 'object' && 'books' in parsed) {
+          const books = (parsed as { books?: unknown }).books;
+          const invalidMarks = books && typeof books === 'object' && !Array.isArray(books)
+            && Object.values(books).some((entry) => {
+              if (!entry || typeof entry !== 'object' || !('annotations' in entry)) return false;
+              const raw = entry as { id?: unknown; annotations?: unknown };
+              return !Array.isArray(raw.annotations) || raw.annotations.length !== this.state.books[String(raw.id)]?.annotations.length;
+            });
+          if (invalidMarks) {
+            this.writesBlocked = true;
+            this.warning = '部分标注状态无效，已停止写入以保护原笔记；请检查阅读状态文件。';
+            try { await copyFile(this.filePath, `${this.filePath}.invalid-annotations.bak`); }
+            catch (error) { this.onError(error as Error); }
+          }
+        }
       } catch (error) {
         this.onError(error as Error);
         this.state = freshState();
         this.warning = '旧阅读状态无法解析，已保存备份；请检查磁盘中的状态文件。';
       }
-      if (version !== '4') {
+      if (version !== '5') {
         try { await copyFile(this.filePath, `${this.filePath}.v${version}.bak`); }
         catch (error) {
           this.onError(error as Error);
@@ -131,12 +176,12 @@ export class StateStore {
       bookmarks: book.bookmarks.filter((mark) => mark.position.format === 'txt').map((mark) => ({ id: mark.id, createdAt: mark.createdAt, offset: (mark.position as Extract<BookPosition, { format: 'txt' }>).offset })) };
   }
   listRecent(): FileRecord[] { return this.listBooks().flatMap((book) => { const record = this.record(book.path); return record ? [record] : []; }); }
-  async importBook(candidate: Omit<BookRecord, 'id' | 'importedAt' | 'recentAt' | 'bookmarks'>): Promise<BookRecord> {
+  async importBook(candidate: Omit<BookRecord, 'id' | 'importedAt' | 'recentAt' | 'bookmarks' | 'annotations'>): Promise<BookRecord> {
     return this.withMutation(async () => {
       const existing = this.byPath(candidate.path);
       if (existing) return structuredClone(existing);
       const now = Date.now();
-      const record: BookRecord = { ...candidate, id: randomUUID(), importedAt: now, recentAt: 0, bookmarks: [] };
+      const record: BookRecord = { ...candidate, id: randomUUID(), importedAt: now, recentAt: 0, bookmarks: [], annotations: [] };
       this.state.books[record.id] = record;
       await this.persist();
       return structuredClone(record);
@@ -173,7 +218,7 @@ export class StateStore {
       if (!book) {
         const now = Date.now();
         book = { id: randomUUID(), format: 'txt', path: filePath, title: path.parse(filePath).name, author: '', coverKey: null,
-          importedAt: now, recentAt: now, size: 0, modifiedAt: 0, position: { format: 'txt', offset: 0, length: 0, encoding: 'utf8' }, bookmarks: [] };
+          importedAt: now, recentAt: now, size: 0, modifiedAt: 0, position: { format: 'txt', offset: 0, length: 0, encoding: 'utf8' }, bookmarks: [], annotations: [] };
         this.state.books[book.id] = book;
       }
       if (book.position.format !== 'txt') throw new Error('这不是 TXT 书籍。');
@@ -232,6 +277,57 @@ export class StateStore {
       book.bookmarks = book.bookmarks.filter((mark) => mark.id !== markId);
       await this.persist();
       return structuredClone(book.bookmarks);
+    });
+  }
+  async addAnnotation(id: string, draft: AnnotationDraft): Promise<Annotation[]> {
+    return this.withMutation(async () => {
+      const book = this.state.books[id];
+      if (!book || book.format === 'pdf' || !draft || typeof draft !== 'object') throw new Error('当前书籍不支持选文标注。');
+      const anchor = parseAnchor(draft.anchor, book.format);
+      if (!anchor || typeof draft.text !== 'string' || !draft.text.trim() || draft.text.length > MAX_ANNOTATION_TEXT
+          || typeof draft.prefix !== 'string' || draft.prefix.length > ANNOTATION_CONTEXT
+          || typeof draft.suffix !== 'string' || draft.suffix.length > ANNOTATION_CONTEXT
+          || typeof draft.note !== 'string' || draft.note.length > MAX_ANNOTATION_NOTE) throw new Error('选文或笔记超出允许长度。');
+      const now = Date.now();
+      const next = this.snapshot();
+      next.books[id].annotations.push({ id: randomUUID(), bookId: id, anchor, text: draft.text, prefix: draft.prefix,
+        suffix: draft.suffix, note: draft.note, status: 'anchored', createdAt: now, updatedAt: now });
+      await this.persist(next, true);
+      return structuredClone(next.books[id].annotations);
+    });
+  }
+  async updateAnnotationNote(id: string, annotationId: string, note: string): Promise<Annotation[]> {
+    return this.withMutation(async () => {
+      if (typeof note !== 'string' || note.length > MAX_ANNOTATION_NOTE) throw new Error('笔记最多 2000 字。');
+      const next = this.snapshot();
+      const mark = next.books[id]?.annotations.find((item) => item.id === annotationId);
+      if (!mark) throw new Error('标注不存在。');
+      mark.note = note;
+      mark.updatedAt = Date.now();
+      await this.persist(next, true);
+      return structuredClone(next.books[id].annotations);
+    });
+  }
+  async removeAnnotation(id: string, annotationId: string): Promise<Annotation[]> {
+    return this.withMutation(async () => {
+      const next = this.snapshot();
+      const marks = next.books[id]?.annotations;
+      if (!marks || !marks.some((mark) => mark.id === annotationId)) throw new Error('标注不存在。');
+      next.books[id].annotations = marks.filter((mark) => mark.id !== annotationId);
+      await this.persist(next, true);
+      return structuredClone(next.books[id].annotations);
+    });
+  }
+  async setAnnotationAnchor(id: string, annotationId: string, anchor: AnnotationAnchor | null): Promise<Annotation[]> {
+    return this.withMutation(async () => {
+      const next = this.snapshot();
+      const book = next.books[id];
+      const mark = book?.annotations.find((item) => item.id === annotationId);
+      if (!mark || (anchor && !parseAnchor(anchor, book.format))) throw new Error('标注位置无效。');
+      if (anchor) mark.anchor = parseAnchor(anchor, book.format)!;
+      mark.status = anchor ? 'anchored' : 'unresolved';
+      await this.persist(next, true);
+      return structuredClone(book.annotations);
     });
   }
   async addBookmark(filePath: string, offset: number): Promise<Bookmark[]> {

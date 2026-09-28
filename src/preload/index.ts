@@ -29,5 +29,9 @@ const api: ReaderApi = {
   removeBook: (id) => ipcRenderer.invoke('reader:remove-book', id),
   relocateBook: (id) => ipcRenderer.invoke('reader:relocate-book', id),
   coverData: (id) => ipcRenderer.invoke('reader:cover-data', id),
+  addAnnotation: (id, draft) => ipcRenderer.invoke('reader:add-annotation', id, draft),
+  updateAnnotationNote: (id, annotationId, note) => ipcRenderer.invoke('reader:update-annotation-note', id, annotationId, note),
+  removeAnnotation: (id, annotationId) => ipcRenderer.invoke('reader:remove-annotation', id, annotationId),
+  setAnnotationAnchor: (id, annotationId, anchor) => ipcRenderer.invoke('reader:set-annotation-anchor', id, annotationId, anchor),
 };
 contextBridge.exposeInMainWorld('reader', api);

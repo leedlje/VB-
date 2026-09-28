@@ -10,7 +10,7 @@ const array = <T>(value: T | T[] | undefined): T[] => value === undefined ? [] :
 const string = (value: unknown): string => typeof value === 'string' ? value.trim() : value && typeof value === 'object' && '#text' in value ? string((value as Record<string, unknown>)['#text']) : '';
 const asObject = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 export interface InspectedBook {
-  record: Omit<BookRecord, 'id' | 'importedAt' | 'recentAt' | 'bookmarks'>;
+  record: Omit<BookRecord, 'id' | 'importedAt' | 'recentAt' | 'bookmarks' | 'annotations'>;
   cover?: { bytes: Uint8Array; mime: string };
 }
 export function formatForPath(filePath: string): BookFormat {

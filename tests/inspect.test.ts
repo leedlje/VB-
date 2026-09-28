@@ -68,7 +68,7 @@ test('version 3 TXT record migrates to a stable ID and retains old settings and 
     [filePath]: { path: filePath, encoding: 'gb18030', offset: 79, length: 100, modifiedAt: 8, recentAt: 9, bookmarks: [{ id: 'old', offset: 54, createdAt: 3 }] },
   } };
   const state = parseState(source);
-  assert.equal(state.version, 4);
+  assert.equal(state.version, 5);
   const book = state.books[state.lastBookId!];
   assert.equal(book.path, filePath);
   assert.equal(book.position.format, 'txt');

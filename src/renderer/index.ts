@@ -1,8 +1,9 @@
 import './style.css';
 import { safePosition, scrollTarget } from './position.ts';
 import { findMatches } from './search.ts';
+import { MAX_ANNOTATION_TEXT, resolveTxtAnchor, textContext } from '../shared/annotations.ts';
 import type { PublicationView, SearchHit } from './publications.ts';
-import type { BookPosition, BookRecord, Encoding, OpenedBook, OpenResult, Theme } from '../shared/types.ts';
+import type { Annotation, AnnotationAnchor, AnnotationDraft, BookPosition, BookRecord, Encoding, OpenedBook, OpenResult, Theme } from '../shared/types.ts';
 
 const byId = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const viewport = byId<HTMLElement>('viewport');
@@ -38,6 +39,13 @@ let publicationMatches: SearchHit[] = [];
 let publicationMatchIndex = -1;
 let publicationSearchGeneration = 0;
 let pdfZoom = 1;
+let annotations: Annotation[] = [];
+let selectedDraft: AnnotationDraft | null = null;
+let editingAnnotationId: string | null = null;
+let bookGeneration = 0;
+const selectionActions = byId<HTMLElement>('selection-actions');
+const annotationEditor = byId<HTMLDialogElement>('annotation-editor');
+const annotationNote = byId<HTMLTextAreaElement>('annotation-note');
 
 function notify(text: string): void {
   message.textContent = text;
@@ -119,6 +127,101 @@ function clearHighlights(): void {
     CSS.highlights.delete('search-results');
     CSS.highlights.delete('search-active');
   }
+}
+
+function activeBookId(): string | null { return currentBook?.id ?? activePublication?.id ?? null; }
+function hideSelectionActions(): void { selectionActions.hidden = true; selectedDraft = null; }
+function showSelectionActions(draft: AnnotationDraft, rect: DOMRect): void {
+  if (!activeBookId()) return;
+  selectedDraft = draft;
+  selectionActions.hidden = false;
+  const width = selectionActions.offsetWidth;
+  const height = selectionActions.offsetHeight;
+  selectionActions.style.left = `${Math.max(8, Math.min(innerWidth - width - 8, rect.left))}px`;
+  selectionActions.style.top = `${Math.max(8, Math.min(innerHeight - height - 8, rect.bottom + 8))}px`;
+}
+function paintAnnotations(): void {
+  if (!('highlights' in CSS)) return;
+  CSS.highlights.delete('annotation-marks');
+  if (!currentBook || !content.firstChild) return;
+  const ranges = annotations.flatMap((mark) => {
+    if (mark.status !== 'anchored' || mark.anchor.format !== 'txt') return [];
+    const range = document.createRange();
+    range.setStart(content.firstChild!, mark.anchor.start);
+    range.setEnd(content.firstChild!, mark.anchor.end);
+    return [range];
+  });
+  CSS.highlights.set('annotation-marks', new Highlight(...ranges));
+}
+function renderAnnotations(): void {
+  const list = byId<HTMLUListElement>('annotations-list');
+  list.replaceChildren();
+  byId<HTMLElement>('annotations-empty').hidden = annotations.length > 0;
+  byId<HTMLButtonElement>('annotations-toggle').disabled = !currentBook && activePublication?.format !== 'epub';
+  for (const mark of [...annotations].sort((a, b) => b.createdAt - a.createdAt)) {
+    const item = document.createElement('li');
+    item.className = 'annotation-item';
+    const excerpt = document.createElement('p');
+    excerpt.className = 'annotation-excerpt';
+    excerpt.textContent = mark.text;
+    const note = document.createElement('p');
+    note.className = 'annotation-note-preview';
+    note.textContent = mark.note || '尚未写想法';
+    const info = document.createElement('small');
+    info.textContent = `${new Date(mark.createdAt).toLocaleString()}${mark.status === 'unresolved' ? ' · 位置待确认' : ''}`;
+    const jump = document.createElement('button');
+    jump.type = 'button'; jump.textContent = '跳转'; jump.disabled = mark.status !== 'anchored';
+    jump.addEventListener('click', () => {
+      if (mark.anchor.format === 'txt') jumpTo(mark.anchor.start);
+      else void publicationView?.go({ format: 'epub', cfi: mark.anchor.cfi, chapter: mark.anchor.chapter, percent: 0 });
+    });
+    const edit = document.createElement('button');
+    edit.type = 'button'; edit.textContent = mark.note ? '查看 / 编辑' : '写想法';
+    edit.addEventListener('click', () => openAnnotationEditor(mark));
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.textContent = '删除'; remove.setAttribute('aria-label', `删除标注 ${mark.text.slice(0, 20)}`);
+    remove.addEventListener('click', async () => {
+      const id = activeBookId();
+      if (!id) return;
+      try { annotations = await window.reader.removeAnnotation(id, mark.id); await refreshAnnotationDisplay(); }
+      catch { notify('删除标注失败，请重试。'); }
+    });
+    item.append(excerpt, note, info, jump, edit, remove);
+    list.append(item);
+  }
+}
+async function refreshAnnotationDisplay(): Promise<void> {
+  if (activePublication?.format === 'epub' && publicationView?.setAnnotations) await reconcileAnnotations(false);
+  else { renderAnnotations(); paintAnnotations(); }
+}
+function openAnnotationEditor(mark?: Annotation): void {
+  const draft = mark ?? selectedDraft;
+  if (!draft) return;
+  editingAnnotationId = mark?.id ?? null;
+  byId<HTMLElement>('annotation-editor-title').textContent = mark ? '标注想法' : '写想法';
+  byId<HTMLElement>('annotation-preview').textContent = draft.text;
+  annotationNote.value = mark?.note ?? '';
+  selectionActions.hidden = true;
+  annotationEditor.showModal();
+  annotationNote.focus();
+}
+async function reconcileAnnotations(changed: boolean): Promise<void> {
+  const id = activeBookId();
+  if (!id) return;
+  const generation = bookGeneration;
+  const resolved = currentBook
+    ? annotations.map((mark) => ({ id: mark.id, anchor: resolveTxtAnchor(currentBook!.content, mark, changed) }))
+    : await publicationView?.setAnnotations?.(annotations, changed) ?? [];
+  for (const item of resolved) {
+    if (generation !== bookGeneration || activeBookId() !== id) return;
+    const mark = annotations.find((entry) => entry.id === item.id);
+    if (!mark) continue;
+    const status = item.anchor ? 'anchored' : 'unresolved';
+    if (mark.status === status && (!item.anchor || JSON.stringify(mark.anchor) === JSON.stringify(item.anchor))) continue;
+    try { annotations = await window.reader.setAnnotationAnchor(id, mark.id, item.anchor); }
+    catch { notify('标注位置保存失败，请检查磁盘空间或文件权限。'); }
+  }
+  if (generation === bookGeneration) { renderAnnotations(); paintAnnotations(); }
 }
 
 function paintMatches(): void {
@@ -239,6 +342,7 @@ function renderBookmarks(): void {
 }
 
 function clearBook(): void {
+  ++bookGeneration;
   window.clearTimeout(saveTimer);
   currentBook = null;
   if (publicationView) { void publicationView.dispose(); publicationView = null; }
@@ -251,6 +355,11 @@ function clearBook(): void {
   byId<HTMLButtonElement>('smaller').disabled = byId<HTMLButtonElement>('larger').disabled = false;
   byId<HTMLButtonElement>('layout-toggle').disabled = false;
   content.textContent = '';
+  annotations = [];
+  hideSelectionActions();
+  annotationEditor.close();
+  CSS.highlights?.delete('annotation-marks');
+  closePanel('annotations-panel');
   content.hidden = true;
   empty.hidden = false;
   title.textContent = '还没有打开书籍';
@@ -260,6 +369,7 @@ function clearBook(): void {
   searchInput.value = '';
   void runSearch();
   renderBookmarks();
+  renderAnnotations();
 }
 
 async function renderRecent(): Promise<void> {
@@ -310,6 +420,8 @@ async function renderRecent(): Promise<void> {
 }
 
 function showBook(book: OpenedBook): void {
+  ++bookGeneration;
+  hideSelectionActions();
   if (publicationView) { void publicationView.dispose(); publicationView = null; }
   activePublication = null;
   byId<HTMLElement>('publication-view').hidden = true;
@@ -321,6 +433,7 @@ function showBook(book: OpenedBook): void {
   window.clearTimeout(saveTimer);
   pendingAnchor = null;
   currentBook = book;
+  annotations = book.annotations;
   fontSize = book.fontSize;
   lineHeight = book.lineHeight;
   contentWidth = book.contentWidth;
@@ -340,6 +453,7 @@ function showBook(book: OpenedBook): void {
   searchInput.value = '';
   void runSearch();
   renderBookmarks();
+  void reconcileAnnotations(book.changed);
   void renderRecent();
   if (book.changed) notify('文件内容已变化，旧进度或书签位置可能不再精确。');
   if (book.warning) notify(book.warning);
@@ -415,7 +529,7 @@ async function changeLayout(lineDelta: number, widthDelta: number): Promise<void
 }
 
 const panels: Record<string, string> = {
-  'recent-panel': 'recent-toggle', 'bookmarks-panel': 'bookmarks-toggle',
+  'recent-panel': 'recent-toggle', 'bookmarks-panel': 'bookmarks-toggle', 'annotations-panel': 'annotations-toggle',
   searchbar: 'search-toggle', layoutbar: 'layout-toggle',
 };
 
@@ -431,8 +545,9 @@ function closePanel(panelId: string, restoreFocus = false): void {
 function togglePanel(panelId: string, toggleId: string): void {
   const panel = byId<HTMLElement>(panelId);
   if (!panel.hidden) { closePanel(panelId); return; }
-  if (panelId === 'recent-panel') closePanel('bookmarks-panel');
-  if (panelId === 'bookmarks-panel') closePanel('recent-panel');
+  if (['recent-panel', 'bookmarks-panel', 'annotations-panel'].includes(panelId)) {
+    for (const other of ['recent-panel', 'bookmarks-panel', 'annotations-panel']) if (other !== panelId) closePanel(other);
+  }
   panel.hidden = false;
   lastPanel = panelId;
   byId<HTMLButtonElement>(toggleId).setAttribute('aria-expanded', 'true');
@@ -457,7 +572,8 @@ function handleShortcut(event: KeyboardEvent): void {
     return;
   }
   if (!event.ctrlKey && key === 'escape') {
-    const active = [lastPanel, 'searchbar', 'recent-panel', 'bookmarks-panel', 'layoutbar']
+    if (!selectionActions.hidden) { hideSelectionActions(); return; }
+    const active = [lastPanel, 'searchbar', 'recent-panel', 'bookmarks-panel', 'annotations-panel', 'layoutbar']
       .find((id) => id && !byId<HTMLElement>(id).hidden);
     if (active) { event.preventDefault(); closePanel(active, true); }
   }
@@ -563,10 +679,14 @@ async function openShelfBook(id: string): Promise<void> {
   }
   const result = await window.reader.openPublication(id);
   if (!result.ok) { notify(result.message); return; }
+  ++bookGeneration;
+  hideSelectionActions();
+  CSS.highlights?.delete('annotation-marks');
   if (publicationView) await publicationView.dispose();
   publicationView = null;
   currentBook = null;
   activePublication = result.book;
+  annotations = result.book.annotations;
   ++publicationSearchGeneration;
   content.hidden = true;
   empty.hidden = true;
@@ -594,7 +714,10 @@ async function openShelfBook(id: string): Promise<void> {
     const { createEpubView, createPdfView } = await import('./publications.ts');
     if (result.book.format === 'epub') {
       const bytes = await window.reader.readPublication(id);
-      publicationView = await createEpubView(host, result.book, onPosition, bytes);
+      publicationView = await createEpubView(host, result.book, onPosition, bytes, showSelectionActions, (markId) => {
+        const mark = annotations.find((item) => item.id === markId);
+        if (mark) openAnnotationEditor(mark);
+      });
     } else {
       const view = await createPdfView(host, result.book, result.url, onPosition);
       publicationView = view;
@@ -604,6 +727,8 @@ async function openShelfBook(id: string): Promise<void> {
     publicationView.setAppearance(fontSize, lineHeight, contentWidth, document.documentElement.dataset.theme ?? 'light');
     renderChapters();
     renderBookmarks();
+    if (result.book.format === 'epub') await reconcileAnnotations(result.changed);
+    else renderAnnotations();
     updateProgress();
     searchInput.value = '';
     updateSearchCount();
@@ -634,6 +759,7 @@ byId<HTMLButtonElement>('empty-open').addEventListener('click', () => { void imp
 byId<HTMLButtonElement>('recent-toggle').addEventListener('click', () => togglePanel('recent-panel', 'recent-toggle'));
 byId<HTMLButtonElement>('search-toggle').addEventListener('click', () => togglePanel('searchbar', 'search-toggle'));
 byId<HTMLButtonElement>('bookmarks-toggle').addEventListener('click', () => togglePanel('bookmarks-panel', 'bookmarks-toggle'));
+byId<HTMLButtonElement>('annotations-toggle').addEventListener('click', () => togglePanel('annotations-panel', 'annotations-toggle'));
 byId<HTMLButtonElement>('layout-toggle').addEventListener('click', () => togglePanel('layoutbar', 'layout-toggle'));
 byId<HTMLButtonElement>('line-smaller').addEventListener('click', () => { void changeLayout(-0.2, 0); });
 byId<HTMLButtonElement>('line-larger').addEventListener('click', () => { void changeLayout(0.2, 0); });
@@ -649,6 +775,58 @@ byId<HTMLButtonElement>('bookmark-add').addEventListener('click', async () => {
     renderBookmarks();
   }
   catch { notify('添加书签失败，请重试。'); }
+});
+function inspectTxtSelection(): void {
+  if (!currentBook || !content.firstChild) return;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) { hideSelectionActions(); return; }
+  const range = selection.getRangeAt(0);
+  if (range.startContainer !== content.firstChild || range.endContainer !== content.firstChild) { hideSelectionActions(); return; }
+  const text = range.toString();
+  if (!text.trim()) { hideSelectionActions(); return; }
+  if (text.length > MAX_ANNOTATION_TEXT) { hideSelectionActions(); notify(`一次最多标注 ${MAX_ANNOTATION_TEXT} 字。`); return; }
+  const start = range.startOffset;
+  const end = range.endOffset;
+  showSelectionActions({ anchor: { format: 'txt', start, end }, text, ...textContext(currentBook.content, start, end), note: '' }, range.getBoundingClientRect());
+}
+content.addEventListener('mouseup', () => window.setTimeout(inspectTxtSelection, 0));
+content.addEventListener('keyup', inspectTxtSelection);
+content.addEventListener('click', (event) => {
+  if (!currentBook || !content.firstChild || !window.getSelection()?.isCollapsed) return;
+  const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+  if (!range || range.startContainer !== content.firstChild) return;
+  const mark = annotations.find((entry) => entry.status === 'anchored' && entry.anchor.format === 'txt'
+    && range.startOffset >= entry.anchor.start && range.startOffset < entry.anchor.end);
+  if (mark) openAnnotationEditor(mark);
+});
+byId<HTMLButtonElement>('selection-highlight').addEventListener('click', async () => {
+  const id = activeBookId();
+  const draft = selectedDraft;
+  if (!id || !draft) return;
+  try {
+    annotations = await window.reader.addAnnotation(id, draft);
+    hideSelectionActions();
+    window.getSelection()?.removeAllRanges();
+    await refreshAnnotationDisplay();
+  } catch { notify('保存高亮失败，请检查磁盘空间或文件权限。'); }
+});
+byId<HTMLButtonElement>('selection-note').addEventListener('click', () => openAnnotationEditor());
+byId<HTMLButtonElement>('annotation-cancel').addEventListener('click', () => annotationEditor.close());
+annotationEditor.addEventListener('close', () => { editingAnnotationId = null; hideSelectionActions(); });
+byId<HTMLButtonElement>('annotation-save').addEventListener('click', async () => {
+  const id = activeBookId();
+  if (!id) return;
+  const saveButton = byId<HTMLButtonElement>('annotation-save');
+  saveButton.disabled = true;
+  try {
+    if (editingAnnotationId) annotations = await window.reader.updateAnnotationNote(id, editingAnnotationId, annotationNote.value);
+    else if (selectedDraft) annotations = await window.reader.addAnnotation(id, { ...selectedDraft, note: annotationNote.value });
+    else return;
+    annotationEditor.close();
+    window.getSelection()?.removeAllRanges();
+    await refreshAnnotationDisplay();
+  } catch { notify('保存想法失败，请检查磁盘空间或文件权限。输入内容已保留。'); }
+  finally { saveButton.disabled = false; }
 });
 searchInput.addEventListener('input', () => { void runSearch(); });
 searchPrev.addEventListener('click', () => stepMatch(-1));

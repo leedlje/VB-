@@ -29,7 +29,7 @@ test('unified shelf imports TXT, EPUB and PDF, deduplicates and keeps original f
     await page.waitForFunction(() => document.querySelectorAll('.shelf-card').length === 3);
     if (process.env.VB_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.VB_SCREENSHOT_DIR, 'shelf.png') });
     assert.match(await page.locator('#message').textContent(), /broken.epub.*损坏/);
-    assert.equal((await state(userData)).version, 4);
+    assert.equal((await state(userData)).version, 5);
     assert.equal(Object.keys((await state(userData)).books).length, 3);
     assert.ok(await page.locator('.shelf-card').filter({ hasText: '山海小书' }).locator('img').count() === 1);
     await choose(app, [files.epub, files.pdf]);
@@ -176,6 +176,7 @@ test('PDF page, zoom, search, bookmark and position survive restart; scanned PDF
     await page.waitForFunction(() => document.querySelectorAll('.shelf-card').length === 2);
     await page.locator('.shelf-card').filter({ hasText: 'PDF Sample' }).first().locator('.shelf-title').click();
     await page.locator('.pdf-canvas').waitFor({ state: 'visible', timeout: 15000 });
+    assert.equal(await page.locator('#annotations-toggle').isDisabled(), true);
     await page.waitForFunction(() => document.getElementById('pdf-total').textContent === '3');
     if (process.env.VB_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.VB_SCREENSHOT_DIR, 'pdf.png') });
     assert.equal(await page.locator('#pdf-total').textContent(), '3');
@@ -265,7 +266,7 @@ test('version 3 TXT profile opens in renamed app with progress, bookmark and set
     await page.locator('#bookmarks-toggle').click();
     assert.equal(await page.locator('#bookmarks-list li').count(), 1);
     const migrated = await state(userData);
-    assert.equal(migrated.version, 4);
+    assert.equal(migrated.version, 5);
     assert.equal(Object.values(migrated.books)[0].bookmarks[0].id, 'old-mark');
     assert.equal(JSON.parse(await readFile(path.join(stateDir, 'state.json.v3.bak'), 'utf8')).version, 3);
   } finally {
