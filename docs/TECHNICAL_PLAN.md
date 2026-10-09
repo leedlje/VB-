@@ -41,6 +41,14 @@ TXT 仅接受完全落在正文内、非空的连续选区，从 `Selection`／`
 
 字体、行距、正文宽度、主题、窗口大小或 EPUB 章节变化后，按持久化锚点重绘高亮。TXT 与 EPUB 各自验证选文和上下文；失败时显示“位置待确认”并保留笔记。状态损坏、写入失败、文件丢失以及多次编辑都应给出可见反馈。EPUB 原有的脚本禁用和外部资源限制继续生效，标注不能成为执行书内 HTML 的入口。
 
+## 资源管理器拖拽导入
+
+渲染页面只提交 `DataTransfer.files` 中的 `File` 对象，不读取旧的 `File.path`，不解析拖入的 URL 或文本路径。隔离的 preload 通过 Electron `webUtils.getPathForFile()` 获取磁盘路径；内存构造的 File、字符串和仿造对象会提示错误，不进入主进程导入。桥接 API 不向页面公开通用 IPC 或路径解析函数。
+
+`reader:drop-books` 仅接受应用窗口主帧且 URL 与预期页面完全匹配的请求；主进程再次校验列表结构、每批最多 500 个文件、绝对路径、NUL 字符、Windows 设备路径与 NTFS 备用数据流，检查扩展名、普通文件及可读权限后复用 `importPaths()`。路径校验在重复记录查找之前进行，损坏 EPUB/PDF、空 TXT 和其他无效文件沿用现有格式检查与逐文件错误处理。路径规范化与状态层的重复检查确保同一路径不创建多份记录；导入只读取原文件，封面和书架状态写入应用目录。
+
+页面全局阻止拖放默认导航，仅在可见书架接收文件；拖入、离开、松开、取消或失焦时更新或清理提示。处理过程中阻止再次拖入，完成后刷新书架并显示逐文件错误。单元测试覆盖校验边界，窗口测试使用 Chromium 的原生磁盘文件拖放通道覆盖批量导入、重复路径、无效文件、状态提示、重启、原文件内容及修改时间不变，并验证伪造 File 和其他窗口不能借用拖拽入口。
+
 ## 测试与交付
 
 - **选文与创建**：TXT 与 EPUB 的正常选文、空选区、跨章节 EPUB 选区、纯高亮、带笔记、取消和复制；搜索高亮与标注高亮可同时存在。
@@ -56,3 +64,5 @@ TXT 仅接受完全落在正文内、非空的连续选区，从 `Selection`／`
 - [Epub.js 标注 API](https://github.com/futurepress/epub.js/blob/master/documentation/md/API.md)
 - [CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API)
 - [DOM Selection.getRangeAt](https://developer.mozilla.org/en-US/docs/Web/API/Selection/getRangeAt)
+- [Electron webUtils.getPathForFile](https://www.electronjs.org/docs/latest/api/web-utils)
+- [Electron IPC 来源校验](https://www.electronjs.org/docs/latest/tutorial/security#17-validate-the-sender-of-all-ipc-messages)

@@ -1,17 +1,164 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createServer } from 'node:http';
-import { _electron as electron } from 'playwright-core';
+import { launch } from './electron.mjs';
 import { writeEpub, writeMixedFixtures, writePdf } from './fixtures.mjs';
 
-const packaged = Boolean(process.env.READER_PACKAGED_EXE);
-const executablePath = path.resolve(process.env.READER_PACKAGED_EXE || 'node_modules/electron/dist/electron.exe');
-const launch = (userData) => electron.launch({ executablePath, args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, READER_TEST_USER_DATA: userData } });
 const choose = (app, paths) => app.evaluate(({ dialog }, filePaths) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths }); }, paths);
 const state = async (userData) => JSON.parse(await readFile(path.join(userData, 'reader-state', 'state.json'), 'utf8'));
+
+// CDP supplies disk-backed native Files, rather than new File() or File.path
+// mocks, so this exercises Electron webUtils through the isolated preload.
+async function nativeDrag(client, page, paths, target = '#shelf', drop = true) {
+  const box = await page.locator(target).boundingBox();
+  assert.ok(box);
+  const args = { x: box.x + box.width / 2, y: box.y + Math.min(100, box.height / 2), data: { items: [], files: paths, dragOperationsMask: 1 } };
+  await client.send('Input.dispatchDragEvent', { ...args, type: 'dragEnter' });
+  await client.send('Input.dispatchDragEvent', { ...args, type: 'dragOver' });
+  if (drop) await client.send('Input.dispatchDragEvent', { ...args, type: 'drop' });
+}
+
+test('native file drops import a mixed batch, deduplicate, report errors and preserve sources across restart', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'vb-drop-e2e-'));
+  const userData = path.join(dir, 'profile');
+  const files = await writeMixedFixtures(dir);
+  const txt = path.join(dir, '中文 小说.TXT');
+  await rename(files.txt, txt);
+  files.txt = txt;
+  const invalid = path.join(dir, 'broken.epub');
+  const brokenPdf = path.join(dir, 'broken.pdf');
+  const emptyTxt = path.join(dir, 'empty.txt');
+  const unsupported = path.join(dir, 'image.png');
+  const folder = path.join(dir, 'folder.epub');
+  await mkdir(folder);
+  await Promise.all([writeFile(invalid, 'broken'), writeFile(brokenPdf, '%PDF-broken'), writeFile(emptyTxt, ''), writeFile(unsupported, 'not a book')]);
+  const sources = Object.values(files);
+  const originals = await Promise.all(sources.map(async (file) => ({ bytes: await readFile(file), mtime: (await stat(file)).mtimeMs })));
+  let app;
+  try {
+    app = await launch(userData);
+    let page = await app.firstWindow();
+    await page.locator('#shelf').waitFor({ state: 'visible' });
+    const client = await page.context().newCDPSession(page);
+    // Hold the real handler briefly to verify busy UI and repeated-drop guard.
+    await app.evaluate(({ ipcMain }) => {
+      const handler = ipcMain._invokeHandlers.get('reader:drop-books');
+      globalThis.releaseDrop = null;
+      ipcMain.removeHandler('reader:drop-books');
+      ipcMain.handle('reader:drop-books', async (...args) => {
+        await new Promise((resolve) => { globalThis.releaseDrop = resolve; });
+        return handler(...args);
+      });
+      globalThis.restoreDrop = () => { ipcMain.removeHandler('reader:drop-books'); ipcMain.handle('reader:drop-books', handler); };
+    });
+    await nativeDrag(client, page, [txt], '#shelf', false);
+    assert.match(await page.locator('#shelf-drop-hint').textContent(), /松开即可导入/);
+    assert.equal(await page.locator('#shelf-drop-hint').isVisible(), true);
+    if (process.env.VB_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.VB_SCREENSHOT_DIR, 'shelf-drop.png') });
+    // Nested child enter/leave must not dismiss the shelf highlight.
+    await page.evaluate(() => {
+      const dataTransfer = new DataTransfer(); dataTransfer.items.add(new File([''], 'x.txt'));
+      const child = document.getElementById('shelf-search');
+      child.dispatchEvent(new DragEvent('dragenter', { bubbles: true, dataTransfer }));
+      child.dispatchEvent(new DragEvent('dragleave', { bubbles: true, dataTransfer }));
+    });
+    assert.equal(await page.locator('#shelf').evaluate((element) => element.classList.contains('drag-over')), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#shelf-drop-hint').isVisible(), false);
+    await nativeDrag(client, page, [txt, files.epub, files.pdf, txt, invalid, brokenPdf, emptyTxt, unsupported, folder]);
+    await page.waitForFunction(() => document.getElementById('shelf').getAttribute('aria-busy') === 'true');
+    assert.match(await page.locator('#shelf-drop-hint').textContent(), /正在导入/);
+    await nativeDrag(client, page, [files.pdf]);
+    await app.evaluate(() => { globalThis.releaseDrop(); globalThis.restoreDrop(); });
+    await page.waitForFunction(() => !document.getElementById('shelf').hasAttribute('aria-busy'));
+    assert.equal(await page.locator('.shelf-card').count(), 3);
+    const message = await page.locator('#message').textContent();
+    assert.match(message, /broken.epub.*损坏/);
+    assert.match(message, /broken.pdf.*损坏/);
+    assert.match(message, /empty.txt.*空/);
+    assert.match(message, /image.png.*仅支持/);
+    assert.match(message, /folder.epub.*普通文件/);
+    assert.equal(await page.locator('#shelf-drop-hint').isVisible(), false);
+    const ids = Object.keys((await state(userData)).books).sort();
+    await nativeDrag(client, page, sources);
+    await page.waitForFunction(() => document.getElementById('message').textContent === '书架已有 3 本所选书籍。');
+    assert.deepEqual(Object.keys((await state(userData)).books).sort(), ids);
+    // Imported books are usable through the original TXT/EPUB/PDF readers.
+    await page.locator('.shelf-card').filter({ hasText: '中文 小说' }).locator('.shelf-title').click();
+    assert.match(await page.locator('#content').textContent(), /中文 TXT/);
+    await page.locator('#shelf-toggle').click();
+    await page.locator('.shelf-card').filter({ hasText: '山海小书' }).locator('.shelf-title').click();
+    await page.locator('#publication-view iframe').first().waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('#shelf-toggle').click();
+    await page.locator('.shelf-card').filter({ hasText: 'PDF Sample' }).locator('.shelf-title').click();
+    await page.locator('.pdf-canvas').waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('#shelf-toggle').click();
+    await app.close();
+    app = await launch(userData);
+    page = await app.firstWindow();
+    await page.locator('#shelf-toggle').click();
+    await page.waitForFunction(() => document.querySelectorAll('.shelf-card').length === 3);
+    assert.deepEqual(Object.keys((await state(userData)).books).sort(), ids);
+    for (let index = 0; index < sources.length; index++) {
+      assert.deepEqual(await readFile(sources[index]), originals[index].bytes);
+      assert.equal((await stat(sources[index])).mtimeMs, originals[index].mtime);
+    }
+  } finally {
+    if (app) await app.close().catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('drop bridge rejects forged paths and memory Files; outside/text drops cannot import or navigate', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'vb-drop-security-'));
+  const txt = path.join(dir, 'book.txt');
+  await writeFile(txt, '正文');
+  let app;
+  try {
+    app = await launch(path.join(dir, 'profile'));
+    const page = await app.firstWindow();
+    await page.locator('#shelf').waitFor({ state: 'visible' });
+    for (const kind of ['string', 'object', 'virtual']) {
+      const result = await page.evaluate(({ kind, txt }) => window.reader.importDroppedBooks(
+        kind === 'string' ? [txt] : kind === 'object' ? [{ name: 'book.txt', path: txt }] : [Object.assign(new File(['正文'], 'book.txt'), { path: txt })]
+      ), { kind, txt });
+      assert.equal(result.added.length, 0);
+      assert.equal(result.errors.length, 1);
+    }
+    const client = await page.context().newCDPSession(page);
+    const url = page.url();
+    await nativeDrag(client, page, [txt], '.toolbar');
+    await page.locator('#shelf-search').evaluate((element) => {
+      const dataTransfer = new DataTransfer(); dataTransfer.setData('text/uri-list', 'https://example.com/book.txt');
+      element.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer }));
+      const event = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer });
+      element.dispatchEvent(event);
+      if (!event.defaultPrevented) throw new Error('Default navigation was not blocked');
+    });
+    assert.equal(page.url(), url);
+    assert.equal(await page.locator('#shelf-drop-hint').isVisible(), false);
+    assert.equal(await page.locator('.shelf-card').count(), 0);
+    // A second Electron window with the same document/preload is still denied.
+    await app.evaluate(async ({ BrowserWindow, app }, url) => {
+      const win = new BrowserWindow({ show: false, webPreferences: { preload: `${app.getAppPath()}/dist/preload.cjs`, contextIsolation: true, sandbox: true, nodeIntegration: false } });
+      await win.loadURL(url);
+    }, url);
+    const other = (await app.windows()).find((candidate) => candidate !== page);
+    assert.ok(other);
+    await other.evaluate(() => { const input = document.createElement('input'); input.type = 'file'; input.id = 'security-file'; document.body.append(input); });
+    await other.locator('#security-file').setInputFiles(txt);
+    const rejected = await other.evaluate(() => window.reader.importDroppedBooks([document.getElementById('security-file').files[0]]));
+    assert.equal(rejected.added.length, 0);
+    assert.match(rejected.errors[0].message, /此窗口/);
+    assert.equal((await page.evaluate(() => window.reader.listBooks())).length, 0);
+  } finally {
+    if (app) await app.close().catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('unified shelf imports TXT, EPUB and PDF, deduplicates and keeps original files', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'vb-shelf-e2e-'));

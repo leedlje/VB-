@@ -54,7 +54,8 @@
           <div class="shelf-tools"><input id="shelf-search" type="search" placeholder="搜索书名" aria-label="搜索书名" />
             <select id="shelf-format" aria-label="格式筛选"><option value="all">全部格式</option><option value="txt">TXT</option><option value="epub">EPUB</option><option value="pdf">PDF</option></select>
             <select id="shelf-sort" aria-label="书架排序"><option value="recent">最近阅读</option><option value="title">书名</option></select></div>
-          <p id="shelf-empty">书架还没有书。点击“导入书籍”添加 TXT、EPUB 或 PDF。</p><div id="shelf-list" class="shelf-list"></div>
+          <p id="shelf-empty">书架还没有书。点击“导入书籍”或将 TXT、EPUB、PDF 拖入书架。</p><div id="shelf-list" class="shelf-list"></div>
+          <div id="shelf-drop-hint" class="shelf-drop-hint" role="status" aria-live="polite" hidden></div>
         </section>
         <section id="empty" class="empty"><div class="empty-mark">书</div><h1>开始阅读</h1><p>从书架打开 TXT、EPUB 或 PDF。</p><button id="empty-open" class="primary large" type="button">导入书籍</button></section>
         <article id="content" class="content" aria-label="书籍正文" hidden></article>

@@ -72,7 +72,9 @@ select:disabled { opacity: .5; }
 .empty p { margin: 0 0 26px; line-height: 1.6; }
 .large { padding: 12px 22px; }
 .message { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); width: min(550px, calc(100vw - 30px)); border-radius: 8px; padding: 12px 18px; background: var(--notice); border: 1px solid var(--notice-border); box-shadow: 0 8px 28px #3b342224; color: var(--notice-text); text-align: center; }
-.shelf { padding: 28px clamp(20px, 5vw, 64px) 60px; }
+.shelf { position: relative; min-height: 100%; padding: 28px clamp(20px, 5vw, 64px) 60px; }
+.shelf.drag-over { outline: 2px dashed var(--accent); outline-offset: -10px; background: var(--soft); }
+.shelf-drop-hint { position: sticky; bottom: 24px; width: fit-content; margin: 24px auto 0; padding: 14px 22px; border: 1px solid var(--accent); border-radius: 10px; background: var(--panel); color: var(--accent); box-shadow: 0 6px 24px #0002; pointer-events: none; }
 .shelf-heading { display: flex; align-items: end; justify-content: space-between; }
 .shelf h1 { margin: 0; font-size: 28px; letter-spacing: -.03em; }
 .shelf-heading p, #shelf-empty { color: var(--muted); }

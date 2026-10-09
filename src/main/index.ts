@@ -3,13 +3,15 @@ import path from 'node:path';
 import { mkdir, open, readFile, stat, writeFile, rm } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isImportBatch, trustedImportSender, validateImportPath } from './import.ts';
 import { BookError, normalizedKey, readBook } from './book.ts';
 import { inspectBook, formatForPath } from './inspect.ts';
 import { StateStore } from './state.ts';
 import { clampOffset, type AnnotationAnchor, type AnnotationDraft, type BookPosition, type Encoding, type ImportResult, type OpenResult, type PublicationResult, type Theme } from '../shared/types.ts';
 
 const baseDir = __dirname;
+const rendererUrl = new URL(process.env.READER_DEV_URL || pathToFileURL(path.join(baseDir, 'renderer', 'index.html')).href).href;
 let window: BrowserWindow | null = null;
 let store: StateStore;
 let currentPath: string | null = null;
@@ -20,10 +22,11 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'vbbook', privileges: { standard
 app.setPath('userData', process.env.READER_TEST_USER_DATA || path.join(app.getPath('appData'), 'local-txt-reader'));
 const coverDir = () => path.join(app.getPath('userData'), 'reader-state', 'covers');
 
-async function importPaths(paths: string[]): Promise<ImportResult> {
+async function importPaths(paths: unknown[]): Promise<ImportResult> {
   const result: ImportResult = { added: [], errors: [] };
-  for (const filePath of paths) {
+  for (const candidate of paths) {
     try {
+      const filePath = await validateImportPath(candidate);
       const existing = store.byPath(filePath);
       if (existing) { result.added.push(existing); continue; }
       const inspected = await inspectBook(filePath);
@@ -40,7 +43,7 @@ async function importPaths(paths: string[]): Promise<ImportResult> {
       }
       result.added.push(book);
     } catch (error) {
-      result.errors.push({ path: filePath, message: error instanceof BookError ? error.message : '导入失败，请检查文件。' });
+      result.errors.push({ path: typeof candidate === 'string' ? candidate.slice(0, 4096) : '', message: error instanceof BookError ? error.message : '导入失败，请检查文件。' });
     }
   }
   return result;
@@ -296,6 +299,13 @@ app.whenReady().then(async () => {
     return store.removeBookmark(filePath, id);
   });
   ipcMain.handle('reader:choose-books', chooseBooks);
+  ipcMain.handle('reader:drop-books', (event, paths: unknown) => {
+    if (!trustedImportSender(event, window?.webContents, rendererUrl)) {
+      return { added: [], errors: [{ path: '', message: '无法从此窗口导入书籍。' }] };
+    }
+    if (!isImportBatch(paths)) return { added: [], errors: [{ path: '', message: '导入文件列表无效或过多，请分批拖入。' }] };
+    return importPaths(paths);
+  });
   ipcMain.handle('reader:list-books', () => store.listBooks());
   ipcMain.handle('reader:last-book-id', () => store.snapshot().lastBookId);
   ipcMain.handle('reader:startup-warning', () => store.loadWarning());

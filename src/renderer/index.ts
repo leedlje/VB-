@@ -3,7 +3,7 @@ import { safePosition, scrollTarget } from './position.ts';
 import { findMatches } from './search.ts';
 import { MAX_ANNOTATION_TEXT, resolveTxtAnchor, textContext } from '../shared/annotations.ts';
 import type { PublicationView, SearchHit } from './publications.ts';
-import type { Annotation, AnnotationAnchor, AnnotationDraft, BookPosition, BookRecord, Encoding, OpenedBook, OpenResult, Theme } from '../shared/types.ts';
+import type { Annotation, AnnotationAnchor, AnnotationDraft, BookPosition, BookRecord, Encoding, ImportResult, OpenedBook, OpenResult, Theme } from '../shared/types.ts';
 
 const byId = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const viewport = byId<HTMLElement>('viewport');
@@ -651,11 +651,71 @@ async function importBooks(): Promise<void> {
   try {
     const result = await window.reader.chooseBooks();
     if (!result) return;
-    await showShelf();
-    if (result.errors.length) notify(`已导入 ${result.added.length} 本；${result.errors.map((item) => `${item.path.split(/[\\/]/).pop()}：${item.message}`).join('；')}`);
-    else notify(`书架已有 ${result.added.length} 本所选书籍。`);
+    await finishImport(result);
   } catch { notify('无法导入书籍，请重试。'); }
 }
+async function finishImport(result: ImportResult): Promise<void> {
+  await showShelf();
+  const count = new Set(result.added.map((book) => book.id)).size;
+  if (result.errors.length) notify(`书架已有 ${count} 本所选书籍；${result.errors.map((item) => `${item.path.split(/[\\/]/).pop() || '文件'}：${item.message}`).join('；')}`);
+  else notify(`书架已有 ${count} 本所选书籍。`);
+}
+
+const shelf = byId<HTMLElement>('shelf');
+const dropHint = byId<HTMLElement>('shelf-drop-hint');
+let dragDepth = 0;
+let dropBusy = false;
+const hasDraggedFiles = (event: DragEvent): boolean => Boolean(event.dataTransfer?.types.includes('Files'));
+const onShelf = (event: DragEvent): boolean => !shelf.hidden && event.target instanceof Node && shelf.contains(event.target);
+function resetDrag(): void {
+  dragDepth = 0;
+  shelf.classList.remove('drag-over');
+  if (!dropBusy) dropHint.hidden = true;
+}
+function showDropHint(): void {
+  shelf.classList.add('drag-over');
+  dropHint.textContent = '松开即可导入 · TXT、EPUB、PDF';
+  dropHint.hidden = false;
+}
+// Cancel default navigation everywhere, including URL/text drops outside the
+// shelf. Only disk-backed files dropped on the visible shelf are imported.
+document.addEventListener('dragenter', (event) => {
+  event.preventDefault();
+  if (!hasDraggedFiles(event) || !onShelf(event) || dropBusy) return;
+  dragDepth++;
+  showDropHint();
+});
+document.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  const accepted = hasDraggedFiles(event) && onShelf(event) && !dropBusy;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = accepted ? 'copy' : 'none';
+  if (accepted) showDropHint();
+  else resetDrag();
+});
+document.addEventListener('dragleave', (event) => {
+  if (!hasDraggedFiles(event)) return;
+  if (onShelf(event)) dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth || event.target === document.documentElement) resetDrag();
+});
+document.addEventListener('drop', (event) => {
+  event.preventDefault();
+  const accepted = onShelf(event) && !dropBusy;
+  const files = Array.from(event.dataTransfer?.files ?? []);
+  resetDrag();
+  if (!accepted || !files.length) return;
+  dropBusy = true;
+  shelf.setAttribute('aria-busy', 'true');
+  dropHint.textContent = `正在导入 ${files.length} 个文件…`;
+  dropHint.hidden = false;
+  void (async () => {
+    try { await finishImport(await window.reader.importDroppedBooks(files)); }
+    catch { notify('无法导入书籍，请重试。'); }
+    finally { dropBusy = false; shelf.removeAttribute('aria-busy'); resetDrag(); }
+  })();
+});
+document.addEventListener('dragend', resetDrag);
+window.addEventListener('blur', resetDrag);
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') resetDrag(); });
 function renderChapters(): void {
   const list = byId<HTMLUListElement>('chapters-list');
   list.replaceChildren();

@@ -4,14 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import iconv from 'iconv-lite';
-import { _electron as electron } from 'playwright-core';
-
-const packaged = Boolean(process.env.READER_PACKAGED_EXE);
-const executablePath = path.resolve(process.env.READER_PACKAGED_EXE || 'node_modules/electron/dist/electron.exe');
-
-async function launch(userData) {
-  return electron.launch({ executablePath, args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, READER_TEST_USER_DATA: userData } });
-}
+import { launch } from './electron.mjs';
 
 async function openTxt(page) {
   await page.locator('#shelf-toggle').waitFor();

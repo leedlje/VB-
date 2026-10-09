@@ -51,6 +51,7 @@ export interface ReaderApi {
   onRequestProgress(callback: () => void): void;
   submitCloseProgress(path: string | null, offset: number): void;
   chooseBooks(): Promise<ImportResult | null>;
+  importDroppedBooks(files: File[]): Promise<ImportResult>;
   listBooks(): Promise<BookRecord[]>;
   getLastBookId(): Promise<string | null>;
   getStartupWarning(): Promise<string | null>;

@@ -3,11 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { _electron as electron } from 'playwright-core';
+import { launch } from './electron.mjs';
 import { writeEpub } from './fixtures.mjs';
 
-const executablePath = path.resolve(process.env.READER_PACKAGED_EXE || 'node_modules/electron/dist/electron.exe');
-const launch = (userData) => electron.launch({ executablePath, args: process.env.READER_PACKAGED_EXE ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, READER_TEST_USER_DATA: userData } });
 const choose = (app, paths) => app.evaluate(({ dialog }, filePaths) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths }); }, paths);
 const state = async (userData) => JSON.parse(await readFile(path.join(userData, 'reader-state', 'state.json'), 'utf8'));
 

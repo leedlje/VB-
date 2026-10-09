@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { droppedPaths } from './drop.ts';
 import type { ReaderApi } from '../shared/types.ts';
 
 const api: ReaderApi = {
@@ -18,6 +19,12 @@ const api: ReaderApi = {
   onRequestProgress: (callback) => { ipcRenderer.on('reader:request-progress', callback); },
   submitCloseProgress: (filePath, offset) => ipcRenderer.send('reader:close-progress', filePath, offset),
   chooseBooks: () => ipcRenderer.invoke('reader:choose-books'),
+  importDroppedBooks: async (files) => {
+    const { paths, errors } = droppedPaths(files, (file) => webUtils.getPathForFile(file));
+    if (!paths.length) return { added: [], errors };
+    const result = await ipcRenderer.invoke('reader:drop-books', paths);
+    return { added: result.added, errors: [...errors, ...result.errors] };
+  },
   listBooks: () => ipcRenderer.invoke('reader:list-books'),
   getLastBookId: () => ipcRenderer.invoke('reader:last-book-id'),
   getStartupWarning: () => ipcRenderer.invoke('reader:startup-warning'),
